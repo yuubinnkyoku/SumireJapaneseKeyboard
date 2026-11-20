@@ -29,3 +29,9 @@ app/liteStandard
 .cache/classified-distribution/
 
 tools/classified-dictionaries/__pycache__/
+
+# Downloaded GGUF models for the zenz instrumentation tests.
+zenz/src/androidTest/assets/*.gguf
+
+# Local verification artifacts (logs, screenshots, probe modules).
+/_artifacts/
