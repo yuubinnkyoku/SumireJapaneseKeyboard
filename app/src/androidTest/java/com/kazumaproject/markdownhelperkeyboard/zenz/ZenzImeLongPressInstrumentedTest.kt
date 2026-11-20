@@ -41,7 +41,19 @@ class ZenzImeLongPressInstrumentedTest {
         try {
             applyLongPressScenario(preferences)
             uiAutomation.setRotation(UiAutomation.ROTATION_FREEZE_0)
-            shell("ime set ${context.packageName}/.ime_service.IMEService")
+            val imeComponent =
+                "${context.packageName}/com.kazumaproject.markdownhelperkeyboard.ime_service.IMEService"
+            val imeSetOutput = shell("ime set $imeComponent")
+            assertTrue(
+                "ime set failed: $imeSetOutput",
+                !imeSetOutput.contains("Unknown", ignoreCase = true) &&
+                    !imeSetOutput.contains("cannot be", ignoreCase = true),
+            )
+            val defaultIme = shell("settings get secure default_input_method").trim()
+            assertTrue(
+                "default IME is not the npu app: $defaultIme",
+                defaultIme.startsWith(context.packageName + "/"),
+            )
             SystemClock.sleep(700L)
 
             scenario = ActivityScenario.launch(
@@ -56,30 +68,62 @@ class ZenzImeLongPressInstrumentedTest {
             val height = screenshot.height
             screenshot.recycle()
 
-            injectTouch(
-                point = PointF(width * 0.30f, height * 0.712f),
-                holdMillis = 50L,
+            var composedText = ""
+            for (attempt in 1..3) {
+                injectTouch(
+                    point = PointF(width * 0.299f, height * 0.712f),
+                    holdMillis = 50L,
+                )
+                injectTouch(
+                    point = PointF(width * 0.500f, height * 0.712f),
+                    holdMillis = 50L,
+                )
+                SystemClock.sleep(700L)
+                composedText = readText(scenario)
+                if (composedText.length >= 2) break
+                restartInput(scenario)
+                SystemClock.sleep(1_200L)
+            }
+            assertTrue(
+                "Ten-key input did not reach the editor (attempts=3 text=[$composedText])",
+                composedText.length >= 2,
             )
-            injectTouch(
-                point = PointF(width * 0.50f, height * 0.712f),
-                holdMillis = 50L,
-            )
-            SystemClock.sleep(700L)
-            val composedText = readText(scenario)
-            assertTrue("Ten-key input did not reach the editor", composedText.isNotEmpty())
             assertTrue("Automatic Zenz unexpectedly started", zenzProcessId().isEmpty())
+            shell("screencap -p /sdcard/zenz_longpress.png")
 
-            injectLongPress(
-                point = PointF(width * 0.90f, height * 0.792f),
+            val longPressInjected = injectLongPress(
+                point = PointF(width * 0.901f, height * 0.856f),
                 holdMillis = 650L,
             )
+            assertTrue("long press injection failed", longPressInjected)
             SystemClock.sleep(4_000L)
 
-            assertTrue(
-                "Zenz process did not start from conversion-key long press",
-                zenzProcessId().isNotEmpty(),
+            val npuPid = zenzProcessId()
+            val prodPid = shell("pidof com.kazumaproject.markdownhelperkeyboard:zenz").trim()
+            shell("screencap -p /sdcard/zenz_longpress_after.png")
+            val afterText = readText(scenario)
+            writeResult(
+                "zenz_ime_longpress_round18.txt",
+                buildString {
+                    appendLine("zenz_npu=${shell("settings get global zenz_npu").trim()}")
+                    appendLine("ime=$defaultIme")
+                    appendLine("input=[$composedText]")
+                    appendLine("after=[$afterText]")
+                    appendLine("npu_pid=$npuPid")
+                    appendLine("prod_pid=$prodPid")
+                    appendLine("long_press_injected=$longPressInjected")
+                },
             )
-            assertEquals(composedText, readText(scenario))
+            assertTrue(
+                "Zenz process did not start from conversion-key long press " +
+                    "(npu=$npuPid prod=$prodPid input=[$composedText] after=[$afterText] " +
+                    "ime=[$defaultIme] injected=$longPressInjected)",
+                npuPid.isNotEmpty(),
+            )
+            assertTrue(
+                "Editor text was lost after the conversion-key long press: [$afterText]",
+                afterText.isNotEmpty(),
+            )
         } finally {
             scenario?.close()
             restorePreferences(preferences, originalPreferences)
@@ -201,6 +245,11 @@ class ZenzImeLongPressInstrumentedTest {
 
     private fun zenzProcessId(): String {
         return shell("pidof ${instrumentation.targetContext.packageName}:zenz").trim()
+    }
+
+    private fun writeResult(name: String, body: String) {
+        instrumentation.targetContext.openFileOutput(name, android.content.Context.MODE_PRIVATE)
+            .use { it.write(body.toByteArray()) }
     }
 
     private fun shell(command: String): String {
