@@ -9,12 +9,31 @@
 #include <cmath>
 #include <android/log.h>
 #include <cstring>
+#include <cstdlib>
+#include <dlfcn.h>
 #include "llama.h"
 #include "ggml.h"
 #include "ggml-backend.h"
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  "zenz-bridge", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "zenz-bridge", __VA_ARGS__)
+
+// The Hexagon FastRPC loader resolves file:///libggml-htp-*.so through
+// ADSP_LIBRARY_PATH. In an Android app the skel lives in nativeLibraryDir,
+// so point the loader at the directory that contains libzenz.so.
+static void zenz_dladdr_anchor() {}
+
+static std::string zenz_native_lib_dir() {
+    Dl_info info;
+    if (dladdr(reinterpret_cast<void *>(&zenz_dladdr_anchor), &info) && info.dli_fname) {
+        std::string path = info.dli_fname;
+        const auto pos = path.find_last_of('/');
+        if (pos != std::string::npos) {
+            return path.substr(0, pos);
+        }
+    }
+    return "";
+}
 
 // モデルと語彙のみグローバルで保持する。
 // コンテキストはセッションで使い回す。
@@ -34,6 +53,9 @@ static bool g_backend_initialized = false;
 // NPU(Hexagon)の明示トグル。initModelのタイミングで読み込まれる。
 // ビルド時にZENZ_ENABLE_NPUが定義されていない場合は常に無効。
 static std::atomic<bool> g_npu_enabled{false};
+static std::atomic<bool> g_model_is_npu{false};
+static std::atomic<bool> g_npu_fallback_latched{false};
+static std::string g_model_path;
 
 struct RuntimeConfig {
     int n_ctx;
@@ -674,6 +696,41 @@ static llama_context *ensure_session_context_locked() {
     return g_session.ctx;
 }
 
+// Called with g_session.mutex held. Drops the NPU model/session and reloads the
+// same model on CPU, then latches CPU for the rest of the process.
+static bool reload_cpu_model_locked() {
+    destroy_session_context_locked();
+    if (g_model) {
+        llama_model_free(g_model);
+        g_model = nullptr;
+        g_vocab = nullptr;
+    }
+    if (g_model_path.empty()) {
+        LOGE("cpu fallback: model path is empty");
+        return false;
+    }
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = 0;
+    mparams.load_mode = LLAMA_LOAD_MODE_MMAP;
+    g_model = llama_model_load_from_file(g_model_path.c_str(), mparams);
+    if (!g_model) {
+        LOGE("cpu fallback: failed to load model");
+        return false;
+    }
+    g_vocab = llama_model_get_vocab(g_model);
+    if (!g_vocab) {
+        llama_model_free(g_model);
+        g_model = nullptr;
+        LOGE("cpu fallback: failed to get vocab");
+        return false;
+    }
+    g_model_is_npu.store(false);
+    g_npu_fallback_latched.store(true);
+    g_npu_enabled.store(false);
+    LOGI("cpu fallback: model reloaded on cpu");
+    return true;
+}
+
 static ZenzGenerationResult no_zenz_result(ZenzGenerationTermination termination) {
     return ZenzGenerationResult{"", termination};
 }
@@ -1178,6 +1235,13 @@ Java_com_kazumaproject_zenz_ZenzEngine_initModel(
         g_model = nullptr;
         g_vocab = nullptr;
     }
+    g_model_path.assign(c_model_path);
+
+    const std::string native_lib_dir = zenz_native_lib_dir();
+    if (!native_lib_dir.empty()) {
+        setenv("ADSP_LIBRARY_PATH", native_lib_dir.c_str(), 1);
+        LOGI("initModel: ADSP_LIBRARY_PATH=%s", native_lib_dir.c_str());
+    }
 
     if (!g_backend_initialized) {
         llama_backend_init();
@@ -1198,10 +1262,12 @@ Java_com_kazumaproject_zenz_ZenzEngine_initModel(
     mparams.n_gpu_layers = use_npu ? -1 : 0; // -1: 全レイヤーをNPUへオフロード
     mparams.load_mode = LLAMA_LOAD_MODE_MMAP;
 
+    g_model_is_npu.store(false);
     g_model = llama_model_load_from_file(c_model_path, mparams);
     if (!g_model && use_npu) {
         // NPU指定でロードに失敗したときはCPUにフォールバックする。
         LOGE("initModel: npu load failed, falling back to cpu");
+        use_npu = false;
         mparams.n_gpu_layers = 0;
         g_model = llama_model_load_from_file(c_model_path, mparams);
     }
@@ -1219,6 +1285,8 @@ Java_com_kazumaproject_zenz_ZenzEngine_initModel(
         env->ReleaseStringUTFChars(jModelPath, c_model_path);
         return JNI_FALSE;
     }
+    g_model_is_npu.store(use_npu);
+    LOGI("initModel: loaded use_npu=%d", (int) use_npu);
 
     env->ReleaseStringUTFChars(jModelPath, c_model_path);
     return JNI_TRUE;
@@ -1272,6 +1340,8 @@ Java_com_kazumaproject_zenz_ZenzEngine_closeModel(
         g_model = nullptr;
         g_vocab = nullptr;
     }
+    g_model_is_npu.store(false);
+    g_model_path.clear();
 
     if (g_backend_initialized) {
         llama_backend_free();
@@ -1334,6 +1404,11 @@ Java_com_kazumaproject_zenz_ZenzEngine_setNpuEnabled(
         jboolean jEnabled
 ) {
     bool enabled = jEnabled == JNI_TRUE;
+    if (enabled && g_npu_fallback_latched.load(std::memory_order_relaxed)) {
+        LOGI("setNpuEnabled: ignored, cpu fallback latched");
+        g_npu_enabled.store(false, std::memory_order_relaxed);
+        return;
+    }
     g_npu_enabled.store(enabled, std::memory_order_relaxed);
     LOGI("setNpuEnabled: %d", (int) enabled);
 }
@@ -1350,6 +1425,41 @@ Java_com_kazumaproject_zenz_ZenzEngine_isNpuAvailable(
     // このビルドにはHexagonバックエンドが含まれていない。
     return JNI_FALSE;
 #endif
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_kazumaproject_zenz_ZenzEngine_getBackendDeviceSummary(
+        JNIEnv *env,
+        jobject /*thiz*/
+) {
+    std::string summary;
+    const size_t n = ggml_backend_dev_count();
+    summary += "count=" + std::to_string(n);
+    for (size_t i = 0; i < n; i++) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        if (!dev) {
+            continue;
+        }
+        ggml_backend_dev_props props;
+        ggml_backend_dev_get_props(dev, &props);
+        summary += "; ";
+        summary += props.name ? props.name : "?";
+        summary += " / ";
+        summary += props.description ? props.description : "?";
+        summary += " / type=" + std::to_string(static_cast<int>(props.type));
+    }
+
+    void *cdsprpc = dlopen("libcdsprpc.so", RTLD_NOW);
+    if (cdsprpc) {
+        summary += "; dlopen(libcdsprpc.so)=ok";
+        dlclose(cdsprpc);
+    } else {
+        const char *err = dlerror();
+        summary += "; dlopen(libcdsprpc.so)=fail: ";
+        summary += err ? err : "?";
+    }
+    return env->NewStringUTF(summary.c_str());
 }
 
 // ------- JNI: 「後半の変換結果」を返す（v1 型） -------
@@ -1408,10 +1518,45 @@ static jstring generate_with_context_and_conditions(
     );
 
     uint64_t request_seq = g_request_seq.fetch_add(1, std::memory_order_relaxed) + 1;
-    const ZenzGenerationResult result = pure_greedy_decoding(
+    ZenzGenerationResult result = pure_greedy_decoding(
             prompt,
             /*maxCount=*/maxTokens,
             request_seq);
+
+    const bool npu_failure =
+            result.termination == ZenzGenerationTermination::DECODE_ERROR ||
+            result.termination == ZenzGenerationTermination::EMPTY_OUTPUT ||
+            result.termination == ZenzGenerationTermination::MODEL_UNAVAILABLE ||
+            result.termination == ZenzGenerationTermination::INVALID_UTF8;
+
+    if (npu_failure && g_model_is_npu.load(std::memory_order_relaxed)) {
+        LOGE("generate: npu generation failed (%s), falling back to cpu",
+             zenz_generation_termination_name(result.termination));
+        bool reloaded = false;
+        {
+            std::lock_guard<std::mutex> lock(g_session.mutex);
+            reloaded = reload_cpu_model_locked();
+        }
+        if (reloaded) {
+            const ZenzGenerationResult retry = pure_greedy_decoding(
+                    prompt,
+                    /*maxCount=*/maxTokens,
+                    request_seq);
+            if (retry.accepted()) {
+                LOGI("generate: cpu fallback succeeded");
+                return toJString(env, accepted_zenz_text(retry));
+            }
+            LOGE("generate: cpu fallback failed (%s)",
+                 zenz_generation_termination_name(retry.termination));
+        }
+        jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+        if (exception_class) {
+            env->ThrowNew(exception_class,
+                          "zenz generation failed on npu and cpu fallback");
+        }
+        return nullptr;
+    }
+
     return toJString(env, accepted_zenz_text(result));
 }
 

@@ -27,6 +27,9 @@ object ZenzEngine {
     /** Hexagonデバイスが利用可能か。CPUビルドでは常にfalse。 */
     external fun isNpuAvailable(): Boolean
 
+    /** 診断用: ggmlバックエンドのデバイス一覧。 */
+    external fun getBackendDeviceSummary(): String
+
     external fun generate(
         prompt: String,
         maxTokens: Int
