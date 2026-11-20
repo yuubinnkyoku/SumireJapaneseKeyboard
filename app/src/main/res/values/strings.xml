@@ -1224,6 +1224,8 @@
     <string name="save_last_used_keyboard_summey">Automatically shows the keyboard you used last time when the app restarts.</string>
     <string name="enable_zenz_right_context_preference_title">Use right-side context</string>
     <string name="enable_zenz_right_context_preference_summary">Pass the text to the right of the cursor as the Zenz v3.2 right-context tag (U+EE07).</string>
+    <string name="zenz_npu_execution_preference_title">Run AI conversion on the NPU</string>
+    <string name="zenz_npu_execution_preference_summary">Uses the device NPU (Hexagon) for AI conversion. Devices and builds without NPU support fall back to the CPU automatically. The change applies the next time the conversion engine starts.</string>
     <string name="typo_correction_title">Typo correction</string>
     <string name="enable_typo_correction_japanese_flick_keyboard_preference_title">Flick (Japanese)</string>
     <string name="enable_typo_correction_japanese_flick_keyboard_preference_sumary">If a typo is detected while using flick input, corrected conversion candidates are shown.</string>

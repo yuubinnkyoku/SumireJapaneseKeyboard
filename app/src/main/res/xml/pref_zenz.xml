@@ -55,6 +55,12 @@
             app:defaultValue="false"
             app:summary="@string/enable_zenz_right_context_preference_summary" />
 
+        <SwitchPreferenceCompat
+            android:key="zenz_npu_execution_preference"
+            android:title="@string/zenz_npu_execution_preference_title"
+            app:defaultValue="true"
+            app:summary="@string/zenz_npu_execution_preference_summary" />
+
         <SeekBarPreference
             android:defaultValue="300"
             android:key="zenz_debounce_time_preference"

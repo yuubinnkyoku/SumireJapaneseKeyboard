@@ -783,6 +783,9 @@ object AppPreference {
     private val ENABLE_ZENZ_RERANK_PREFERENCE =
         Pair("enable_zenz_rerank_preference", false)
 
+    private val ZENZ_NPU_EXECUTION_PREFERENCE =
+        Pair("zenz_npu_execution_preference", true)
+
     private val ZENZ_DEBOUNCE_TIME_PREFERENCE = Pair("zenz_debounce_time_preference", 300)
 
     private val ZENZ_MAXIMUM_LETTER_SIZE_PREFERENCE =
@@ -4099,6 +4102,21 @@ object AppPreference {
         )
         set(value) = preferences.edit {
             it.putBoolean(ENABLE_ZENZ_RERANK_PREFERENCE.first, value)
+        }
+
+    /**
+     * Runs the zenz model on the Hexagon NPU when the build and the device support it.
+     *
+     * The value is read when the model is loaded, so a change takes effect on the next
+     * engine start. Builds without the NPU backend ignore it and stay on the CPU.
+     */
+    var zenz_npu_execution_preference: Boolean
+        get() = preferences.getBoolean(
+            ZENZ_NPU_EXECUTION_PREFERENCE.first,
+            ZENZ_NPU_EXECUTION_PREFERENCE.second
+        )
+        set(value) = preferences.edit {
+            it.putBoolean(ZENZ_NPU_EXECUTION_PREFERENCE.first, value)
         }
 
     var zenz_debounce_time_preference: Int?

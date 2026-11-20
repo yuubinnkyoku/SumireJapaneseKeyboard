@@ -3,7 +3,7 @@ package com.kazumaproject.markdownhelperkeyboard.zenz.runtime
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
-import android.provider.Settings
+import com.kazumaproject.markdownhelperkeyboard.setting_activity.AppPreference
 import com.kazumaproject.zenz.ZenzEngine
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
@@ -258,15 +258,12 @@ class ZenzRuntimeService : Service() {
     }
 
     /**
-     * NPU(Hexagon)の明示トグル。adbで切り替える:
-     *   有効:  adb shell settings put global zenz_npu 1
-     *   無効:  adb shell settings put global zenz_npu 0
-     * 設定は次回のモデル初期化(アプリ再起動やモデル再読み込み)で反映される。
-     * 既定は無効(CPU)。
+     * Whether the model should run on the Hexagon NPU.
+     *
+     * The value comes from the app settings and is read when the model loads, so a change
+     * takes effect on the next engine start. Builds without the NPU backend ignore it.
      */
-    private fun readNpuEnabledSetting(): Boolean =
-        runCatching { Settings.Global.getInt(contentResolver, "zenz_npu", 0) == 1 }
-            .getOrDefault(false)
+    private fun readNpuEnabledSetting(): Boolean = AppPreference.zenz_npu_execution_preference
 
     private fun CoroutineDispatcher.closeIfPossible() {
         (this as? AutoCloseable)?.close()
