@@ -105,7 +105,7 @@ class ZenzImeLongPressInstrumentedTest {
             writeResult(
                 "zenz_ime_longpress_round18.txt",
                 buildString {
-                    appendLine("zenz_npu=${shell("settings get global zenz_npu").trim()}")
+                    appendLine("zenz_npu=${npuPreferenceLabel(context)}")
                     appendLine("ime=$defaultIme")
                     appendLine("input=[$composedText]")
                     appendLine("after=[$afterText]")
@@ -247,6 +247,12 @@ class ZenzImeLongPressInstrumentedTest {
         return shell("pidof ${instrumentation.targetContext.packageName}:zenz").trim()
     }
 
+    /** Reads the NPU switch the same way the runtime service does. */
+    private fun npuPreferenceLabel(context: android.content.Context): String {
+        val enabled = PreferenceManager.getDefaultSharedPreferences(context)
+            .getBoolean("zenz_npu_execution_preference", true)
+        return "zenz_npu_execution_preference=$enabled"
+    }
     private fun writeResult(name: String, body: String) {
         instrumentation.targetContext.openFileOutput(name, android.content.Context.MODE_PRIVATE)
             .use { it.write(body.toByteArray()) }

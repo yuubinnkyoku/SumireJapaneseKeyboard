@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
-import android.provider.Settings
+import androidx.preference.PreferenceManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertTrue
@@ -37,11 +37,10 @@ class ZenzRuntimeServiceNpuTest {
             }
         }
 
-        val npuSetting = Settings.Global.getInt(context.contentResolver, "zenz_npu", 0)
-        val htpFailTest = Settings.Global.getInt(context.contentResolver, "zenz_htp_fail_test", 0)
+        val npuSetting = PreferenceManager.getDefaultSharedPreferences(context)
+            .getBoolean("zenz_npu_execution_preference", true)
         val sb = StringBuilder()
-        sb.append("zenz_npu=$npuSetting\n")
-        sb.append("zenz_htp_fail_test=$htpFailTest\n")
+        sb.append("zenz_npu_execution_preference=$npuSetting\n")
         sb.append("model=${model.length()}\n")
 
         val connectLatch = CountDownLatch(1)

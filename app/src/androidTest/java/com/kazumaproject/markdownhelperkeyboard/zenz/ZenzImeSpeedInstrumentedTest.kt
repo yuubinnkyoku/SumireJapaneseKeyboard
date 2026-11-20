@@ -80,7 +80,7 @@ class ZenzImeSpeedInstrumentedTest {
             val delete = PointF(width * 0.901f, height * 0.712f)
 
             val report = StringBuilder()
-            report.appendLine("zenz_npu=${shell("settings get global zenz_npu").trim()}")
+            report.appendLine("zenz_npu=${npuPreferenceLabel(context)}")
 
             val samples = mutableListOf<Long>()
             repeat(5) { round ->
@@ -267,6 +267,12 @@ class ZenzImeSpeedInstrumentedTest {
         )
     }
 
+    /** Reads the NPU switch the same way the runtime service does. */
+    private fun npuPreferenceLabel(context: android.content.Context): String {
+        val enabled = PreferenceManager.getDefaultSharedPreferences(context)
+            .getBoolean("zenz_npu_execution_preference", true)
+        return "zenz_npu_execution_preference=$enabled"
+    }
     private fun writeResult(name: String, body: String) {
         instrumentation.targetContext.openFileOutput(name, Context.MODE_PRIVATE)
             .use { it.write(body.toByteArray()) }

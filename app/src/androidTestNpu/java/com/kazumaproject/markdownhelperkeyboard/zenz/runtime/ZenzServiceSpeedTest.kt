@@ -48,7 +48,10 @@ class ZenzServiceSpeedTest {
             "キョウハテンキ",
         )
         val report = StringBuilder()
-        report.appendLine("zenz_npu=${shell(context, "settings get global zenz_npu").trim()}")
+        val npuEnabled = androidx.preference.PreferenceManager
+            .getDefaultSharedPreferences(context)
+            .getBoolean("zenz_npu_execution_preference", true)
+        report.appendLine("zenz_npu_execution_preference=$npuEnabled")
 
         val connectLatch = CountDownLatch(1)
         var remote: IZenzRuntime? = null
