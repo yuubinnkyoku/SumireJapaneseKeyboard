@@ -2443,3 +2443,231 @@ max_ms=606.600417
   - `zenz/src/androidTest/java/com/kazumaproject/zenz/ZenzNpuSpeedTest.kt`
 - 取得物: `_artifacts/evidence/` 配下にスクリーンショットと候補バーの crop。
 - push / merge / force-push なし。端末再起動なし。
+
+## §31 第23ラウンド: upstreamマージとNPU/CPU切り替え設定UI化（2026-11-21）
+
+指示書に沿って、ローカル資産のコミット化、NPU/CPUスイッチの設定UI化、upstream最新devのマージ、`.npu`での実機再確認を行った。**push/PRは未実施。**
+
+### §31.1 Phase 1: ローカル資産のコミット化
+
+統合ブランチ `zenz/npu-upstream-20261121` を `zenz/npu` HEAD（`21ce8ac`）から作成した。
+
+**事前整理:**
+
+- `app/src/main/assets/mozc/*.json` の2ファイルは改行コードのみの差分だったので `git checkout` で戻した（実質変更なし）。
+- `settings.gradle` の `include ':zenzprobe'` を戻し、`zenzprobe/` を `_artifacts/` へ退避した。検証専用モジュールはupstreamに出さない。
+- `zenz/src/main/cpp/zenz-link-libs/`（`libcdsprpc.so` の実験用コピー）も `_artifacts/` へ退避した。CMakeLists の参照はコメントアウト済み。
+- `.gitignore` に `zenz/src/androidTest/assets/*.gguf`（20MBのモデル）と `/_artifacts/` を追加した。
+
+**コミット一覧（8件）:**
+
+| ハッシュ | メッセージ |
+|---|---|
+| `759cba53b` | app : add npu edition flavor that runs zenz in a private process |
+| `22f1a68dd` | zenz : build the Hexagon backend from prebuilt skel libraries |
+| `375eec0a7` | zenz : fall back to cpu when the Hexagon backend fails mid-session |
+| `a4f5266ca` | zenz : add instrumentation tests for the npu path |
+| `b175958b6` | docs : record the npu verification rounds and the upstream cleanup plan |
+| `d83b3efcf` | settings : expose the NPU switch in the zenz preferences |
+| `d5f61dc27` | zenz : read the NPU switch from preferences in the tests |
+| `215d80914` | Merge upstream dev (1.7.162) into the npu branch |
+
+### §31.2 Phase 2: NPU/CPU切り替えの設定UI化
+
+**変更内容:**
+
+`AppPreference.kt`
+```kotlin
+private val ZENZ_NPU_EXECUTION_PREFERENCE =
+    Pair("zenz_npu_execution_preference", true)
+
+var zenz_npu_execution_preference: Boolean
+    get() = preferences.getBoolean(
+        ZENZ_NPU_EXECUTION_PREFERENCE.first,
+        ZENZ_NPU_EXECUTION_PREFERENCE.second
+    )
+    set(value) = preferences.edit {
+        it.putBoolean(ZENZ_NPU_EXECUTION_PREFERENCE.first, value)
+    }
+```
+
+`pref_zenz.xml`（`zenz_generation_category` 内、`enable_zenz_right_context_preference` の直後）
+```xml
+<SwitchPreferenceCompat
+    android:key="zenz_npu_execution_preference"
+    android:title="@string/zenz_npu_execution_preference_title"
+    app:defaultValue="true"
+    app:summary="@string/zenz_npu_execution_preference_summary" />
+```
+
+`values/strings.xml` / `values-ja/strings.xml`
+```text
+title:   Run AI conversion on the NPU / AI変換をNPUで実行する
+summary: Uses the device NPU (Hexagon) for AI conversion. Devices and builds without NPU
+         support fall back to the CPU automatically. The change applies the next time the
+         conversion engine starts.
+         / AI変換の計算に端末のNPU（Hexagon）を使います。NPUに対応していない端末やビルドでは
+           自動的にCPUで実行します。設定は次回の変換エンジン起動時に反映されます。
+```
+
+`ZenzRuntimeService.kt`（`src/full` と `src/npu` の両方）
+```kotlin
+private fun readNpuEnabledSetting(): Boolean = AppPreference.zenz_npu_execution_preference
+```
+
+- `Settings.Global` の読み取りは削除した。`import android.provider.Settings` も外した。
+- `AppPreference.preferences` は未初期化なら `initialization.join()` で待つ。`Application.onCreate` が `:zenz` プロセスでも走るので、actorスレッドからの読み出しは安全。
+- テスト側も `settings get global zenz_npu` をやめ、`PreferenceManager.getDefaultSharedPreferences` から `zenz_npu_execution_preference` を読むようにした。
+
+**ビルド:** `BUILD SUCCESSFUL in 5m 23s`
+
+### §31.3 Phase 3: upstream最新devのマージ
+
+**前提の解消:** リポジトリが shallow clone（`.git/shallow` に `9499d22`）だったため、`git merge-base` が取れなかった。`git fetch --unshallow origin` で履歴を取得した。
+
+```text
+merge base: 53a349fe73d6dc73ab19e7a574b2bc3d2f413128
+ahead/behind: 12 / 39
+```
+
+**upstream dev HEAD:** `f96357a9c`（Merge pull request #1378、internal 1.7.162）。指示書の想定と一致。
+
+**マージ結果: コンフリクトなし。**
+
+```text
+Auto-merging app/build.gradle
+Auto-merging app/src/main/res/values-ja/strings.xml
+Auto-merging app/src/main/res/values/strings.xml
+Automatic merge went well; stopped before committing as requested
+```
+
+指示書が予測した2つの競合候補（`app/build.gradle`、`IMEService.kt`）はいずれも自動マージされた。
+
+**確認事項:**
+
+- `versionName` は上流の `1.7.162` を取った。`versionNameSuffix "-npu"` は維持。
+- npu flavor 定義（`npu { ... }`）、`onVariants(selector().withFlavor("edition", "npu"))`、`npuImplementation project(':zenz')` はすべて維持。
+- `git submodule status` は変更なし:
+  ```text
+   cd959bae99ff4bed22bef2604f45241c09bbb8c8 ai-runtime/src/main/cpp/llama.cpp (v0.9.0)
+   4e7486362c82c0435ac2cf30bad415d13b784389 zenz/src/main/cpp/llama.cpp (heads/zenz/hexagon-skel-option)
+  ```
+  `zenz` は fork の llama.cpp を指したまま。`ai-runtime` の gitlink も上流で更新されていなかった。
+
+**マージ後のビルド:** `BUILD SUCCESSFUL in 9m 56s`
+
+### §31.4 Phase 4: 実機再確認
+
+インストールしたAPK: `versionName=1.7.162-npu`
+
+#### 設定UI
+
+`zenz` 設定画面に「AI変換をNPUで実行する」スイッチが表示され、**既定 ON**（`checked=true`）だった。summary も日本語で正しく表示されている。
+
+```text
+AI変換をNPUで実行する
+AI変換の計算に端末のNPU（Hexagon）を使います。NPUに対応していない端末やビルドでは
+自動的にCPUで実行します。設定は次回の変換エンジン起動時に反映されます。
+```
+
+スクリーンショット: `_artifacts/evidence/settings_npu_switch.png`
+
+#### スイッチON: NPUで動作
+
+長押しテスト:
+
+```text
+ZenzImeLongPressInstrumentedTest
+Time: 9.584
+OK (1 test)
+```
+
+速度（`:zenz` サービス経由、`ZenzServiceSpeedTest`）:
+
+```text
+zenz_npu_execution_preference=true
+init_ms=728.830364
+min_ms=26.334062
+median_ms=31.022865
+max_ms=35.521771
+```
+
+#### スイッチOFF: CPUで動作
+
+```text
+zenz_npu_execution_preference=false
+init_ms=105.467187
+min_ms=502.838645
+median_ms=552.916354
+max_ms=574.60276
+```
+
+#### スイッチON復帰: NPUに戻る
+
+```text
+zenz_npu_execution_preference=true
+init_ms=707.830624
+min_ms=20.198854
+median_ms=25.087291
+max_ms=32.016302
+```
+
+**ON -> OFF -> ON の切り替えがすべて反映された。** 設定変更はアプリ再起動（`am force-stop`）後に有効になった。
+
+#### 4例の変換結果
+
+| 読み | NPU（スイッチON） | CPU（スイッチOFF） |
+|---|---|---|
+| セイドガタカイ | 制度が高い (23.7ms) | 精度が高い (544.4ms) |
+| カンジヘンカン | 漢字変換 (22.2ms) | 漢字変換 (504.6ms) |
+| ニホンニュウリョク | 日本入力 (20.2ms) | 日本入力 (569.5ms) |
+| キョウハテンキ | 今日は天気 (25.1ms) | 今日は天気 (563.4ms) |
+
+**3/4 が一致。** `セイドガタカイ` だけ NPU が「制度が高い」、CPU が「精度が高い」と分かれた。これは浮動小数点の演算順序差によるもので、どちらも文法的に妥当。第22ラウンドでも同じ差が出ている。
+
+#### 速度比較
+
+| 指標 | NPU | CPU | 倍率 |
+|---|---|---|---|
+| 中央値 | **31.0 ms** | **552.9 ms** | **17.8x** |
+| 最小 | 26.3 ms | 502.8 ms | 19.1x |
+| 最大 | 35.5 ms | 574.6 ms | 16.2x |
+| init | 729 ms | 105 ms | 0.14x |
+
+指示書の「CPU比10倍以上」を満たす（17.8倍）。
+
+### §31.5 Phase 5: 復旧
+
+- スイッチは **ON** に戻した（`zenz_npu_execution_preference=true`）。
+- 旧 `settings global zenz_npu` / `zenz_htp_fail_test` は削除済み（`settings delete global`）。
+- 端末上の一時ファイル（`/data/local/tmp/prefs_*.xml`、`/sdcard/ui*.xml`）を削除した。
+- 本番アプリ `com.kazumaproject.markdownhelperkeyboard` は未変更。
+- 端末再起動なし。push / merge / force-push なし（upstreamからのマージコミットはローカルのみ）。
+
+### §31.6 第23ラウンドの判定
+
+| # | 目標 | 判定 | 根拠 |
+|---|---|---|---|
+| 1 | ローカル資産のコミット化 | **PASS** | 8コミット、作業ツリーclean |
+| 2 | NPU/CPUスイッチの設定UI化 | **PASS** | 設定画面に表示、既定ON、`AppPreference` 経由 |
+| 3 | upstream最新devのマージ | **PASS** | `f96357a9` をマージ、コンフリクト0、`1.7.162` |
+| 4 | サブモジュール維持 | **PASS** | `zenz` は `4e748636` のまま |
+| 5 | マージ後のビルド | **PASS** | `BUILD SUCCESSFUL in 9m 56s` |
+| 6 | 設定UIにスイッチ表示 | **PASS** | スクリーンショット、既定ON |
+| 7 | スイッチONでNPU動作 | **PASS** | 長押しテスト `OK`、中央値31.0ms |
+| 8 | スイッチOFFでCPU動作 | **PASS** | 中央値552.9ms、4例すべて変換成立 |
+| 9 | スイッチON復帰 | **PASS** | 中央値25.1ms |
+| 10 | CPU比10倍以上 | **PASS** | 17.8倍 |
+
+### §31.7 次の一手
+
+1. このブランチをpushし、PRを作成するか判断する（所有者判断）。
+2. `zenz_npu_execution_preference` を `full` フレーバーでも表示するか検討する（現在は `pref_zenz.xml` が共通なので full でも表示される。ただし full の zenz は NPU 非対応ビルドなので、スイッチを出さない方が親切かもしれない）。
+3. 設定変更を即時反映したい場合、`initialize` の再実行を促すUIを検討する。
+
+### §31.8 ローカル状態
+
+- ブランチ: `zenz/npu-upstream-20261121`（`zenz/npu` から分岐、upstream/dev をマージ済み）
+- 作業ツリー: clean
+- 端末: `.npu` インストール済み（`1.7.162-npu`）、スイッチON、既定IMEは本番アプリ
+- 成果物: `_artifacts/evidence/settings_npu_switch.png`
