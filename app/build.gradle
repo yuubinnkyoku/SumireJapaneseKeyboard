@@ -65,6 +65,17 @@ android {
             buildConfigField "boolean", "HAS_GEMMA", "true"
             buildConfigField "String", "APP_EDITION", "\"full\""
         }
+        npu {
+            dimension "edition"
+            applicationIdSuffix ".npu"
+            versionNameSuffix "-npu"
+            buildConfigField "boolean", "HAS_ZENZ", "true"
+            buildConfigField "boolean", "HAS_GEMMA", "false"
+            buildConfigField "String", "APP_EDITION", "\"full\""
+            ndk {
+                abiFilters 'arm64-v8a'
+            }
+        }
         lite {
             dimension "edition"
             applicationIdSuffix ".lite"
@@ -90,6 +101,9 @@ android {
     variantFilter { variant ->
         def flavorNames = variant.flavors*.name
         if (flavorNames.contains("full") && flavorNames.contains("fdroid")) {
+            setIgnore(true)
+        }
+        if (flavorNames.contains("npu") && flavorNames.contains("fdroid")) {
             setIgnore(true)
         }
     }
@@ -283,6 +297,10 @@ androidComponents {
                 '**/libLiteRtDispatch_GoogleTensor.so',
             ])
         }
+    }
+    onVariants(selector().withFlavor("edition", "npu")) { variant ->
+        variant.packaging.jniLibs.useLegacyPackaging.set(true)
+        variant.packaging.jniLibs.useLegacyPackagingFromBundle.set(true)
     }
     onVariants(selector().all()) { variant ->
         if (variant.buildType in ['release', 'releaseUnsigned']) {
@@ -1387,6 +1405,7 @@ dependencies {
     implementation project(':qwerty_keyboard')
     implementation project(':custom_keyboard')
     fullImplementation project(':zenz')
+    npuImplementation project(':zenz')
     fullImplementation project(':ai-runtime')
 
     implementation 'androidx.fragment:fragment-ktx:1.8.8'
