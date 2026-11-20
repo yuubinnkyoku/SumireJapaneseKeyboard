@@ -74,6 +74,17 @@ find_library(log-lib log)
 
 if(ZENZ_ENABLE_NPU)
     target_compile_definitions(zenz PRIVATE ZENZ_ENABLE_NPU=1)
+
+    # Round 10/11 DT_NEEDED experiment (PocketPal-style). Disabled again after
+    # the round 11 normal-app probe failed at the classloader namespace. Keep
+    # the link-only libdir for a later custom-namespace/preload build.
+    # set(ZENZ_CDSPRC_LINK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/zenz-link-libs")
+    # target_link_options(zenz PRIVATE
+    #     "-L${ZENZ_CDSPRC_LINK_DIR}"
+    #     "-Wl,--no-as-needed"
+    #     "-l:libcdsprpc.so"
+    #     "-Wl,--as-needed"
+    # )
 endif()
 
 target_link_libraries(zenz
@@ -81,4 +92,5 @@ target_link_libraries(zenz
         llama
         ggml
         ${log-lib}
+        dl
 )

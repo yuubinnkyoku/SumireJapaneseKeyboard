@@ -80,7 +80,8 @@ if (zenzNpuEnabled) {
             "-DZENZ_ENABLE_NPU=ON",
             "-DGGML_HEXAGON=ON",
             "-DGGML_HEXAGON_HTP_SKEL=OFF",
-            "-DHEXAGON_SDK_ROOT=${zenzHexagonSdkRoot}"
+            "-DHEXAGON_SDK_ROOT=${zenzHexagonSdkRoot}",
+            "-DPREBUILT_LIB_DIR=toolv19_v81"
     ]
     if (zenzHexagonToolsRoot) {
         zenzNpuCmakeArgs += "-DHEXAGON_TOOLS_ROOT=${zenzHexagonToolsRoot}"
@@ -98,7 +99,7 @@ android {
 
     defaultConfig {
         minSdk 24
-        targetSdk 37
+        targetSdk 36
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles "consumer-rules.pro"
     }
@@ -161,6 +162,8 @@ android {
             jniLibs {
                 // Hexagon向けバイナリ(DSP側ELF)はAndroidのstrip対象から外す
                 keepDebugSymbols += ["**/libggml-htp-*.so", "**/libomp.so"]
+                // DSP loader needs a real file path, not an APK entry
+                useLegacyPackaging = true
             }
         }
     }
