@@ -2671,3 +2671,223 @@ max_ms=32.016302
 - 作業ツリー: clean
 - 端末: `.npu` インストール済み（`1.7.162-npu`）、スイッチON、既定IMEは本番アプリ
 - 成果物: `_artifacts/evidence/settings_npu_switch.png`
+
+## §32 第24ラウンド: v3.2-small モデルへの差し替え（2026-11-21）
+
+現行の `zenz-v3.2-xsmall`（26M）から `zenz-v3.2-small`（95.1M）へ差し替えて、速度・精度・安定性を測った。
+
+### §32.1 モデルの実読確認
+
+ダウンロードしたファイルの GGUF ヘッダを読んで、指示書の記載と一致することを確認した。
+
+```text
+magic: GGUF
+version: 3
+tensors=149  kv_pairs=24
+```
+
+メタデータ:
+
+```text
+general.architecture = gpt2
+general.name = Gpt2 Small Japanese Char
+general.size_label = small
+general.file_type = 17
+tokenizer.ggml.model = gpt2
+tokenizer.ggml.pre = gpt2-small-japanese-char
+tokenizer.ggml.bos_token_id = 1
+tokenizer.ggml.eos_token_id = 2
+general.quantization_version = 2
+```
+
+- `general.size_label = small` で xsmall ではない。
+- トークナイザーは `gpt2-small-japanese-char` で**現行と同一**。したがってプロンプト書式（v3.2、右文脈 U+EE07）はそのまま使える。
+- ファイルサイズ 70.4 MB（xsmall は 20.9 MB）。
+
+### §32.2 差し替え手順
+
+`prepareZenzModel` は Windows で失敗する（`venv/bin/pip` のパス不一致、§29）ので、手動配置で回避した。
+
+```powershell
+$url = "https://huggingface.co/Miwa-Keita/zenz-v3.2-small-gguf/resolve/ef3e66e3665fe6a19598e6578e9b88a994b647fd/ggml-model-Q5_K_M.gguf"
+$out = "zenz\build\generated\assets\zenzModel\main\ggml-model-Q5_K_M.gguf"
+Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+```
+
+アセット名が同一（`ggml-model-Q5_K_M.gguf`）なので、アプリ側の参照（`IMEService.kt:31984` の `defaultAssetFileName`）は変更不要。
+
+ビルド:
+
+```text
+.\gradlew.bat :app:assembleNpuStandardDebug -x :zenz:prepareZenzModel --no-daemon
+BUILD SUCCESSFUL in 2m 15s
+```
+
+APK サイズとモデル同梱の確認:
+
+```text
+APK: 202.4 MB（xsmall 版は 156.3 MB）
+assets/ggml-model-Q5_K_M.gguf  70.4 MB
+```
+
+### §32.3 速度測定
+
+`:zenz` サービス経由（`ZenzServiceSpeedTest`）で測った。ウォームアップ1回のあと、4読み x 3周 = 12サンプル。
+
+#### NPU（スイッチON）
+
+```text
+zenz_npu_execution_preference=true
+ready pid=12153
+init_ms=1468.357656
+reading=セイドガタカイ ms=60.074219 text=制度が高い
+reading=カンジヘンカン ms=55.67974 text=漢字変換
+reading=ニホンニュウリョク ms=56.333386 text=日本入力
+reading=キョウハテンキ ms=64.101407 text=今日は天気
+reading=セイドガタカイ ms=68.831458 text=制度が高い
+reading=カンジヘンカン ms=68.515989 text=漢字変換
+reading=ニホンニュウリョク ms=68.340208 text=日本入力
+reading=キョウハテンキ ms=78.328594 text=今日は天気
+reading=セイドガタカイ ms=79.153593 text=制度が高い
+reading=カンジヘンカン ms=66.173594 text=漢字変換
+reading=ニホンニュウリョク ms=67.880312 text=日本入力
+reading=キョウハテンキ ms=80.385833 text=今日は天気
+min_ms=55.67974
+median_ms=68.340208
+max_ms=80.385833
+```
+
+#### CPU（スイッチOFF）
+
+```text
+zenz_npu_execution_preference=false
+ready pid=12419
+init_ms=764.174687
+run timeout reading=セイドガタカイ
+reading=セイドガタカイ ms=253481.118185 text=
+reading=カンジヘンカン ms=580.275364 text=漢字変換
+reading=ニホンニュウリョク ms=510.243229 text=日本入力
+reading=キョウハテンキ ms=216.263854 text=今日は天気
+reading=セイドガタカイ ms=224.607084 text=精度が高い
+reading=カンジヘンカン ms=245.54901 text=漢字変換
+reading=ニホンニュウリョク ms=415.354844 text=日本入力
+reading=キョウハテンキ ms=295.472083 text=今日は天気
+reading=セイドガタカイ ms=269.61875 text=精度が高い
+reading=カンジヘンカン ms=216.531094 text=漢字変換
+reading=ニホンニュウリョク ms=236.999323 text=日本入力
+reading=キョウハテンキ ms=222.433958 text=今日は天気
+min_ms=216.263854
+median_ms=269.61875
+max_ms=253481.118185
+```
+
+**注意:** 最初の1件が `run timeout`（120秒待っても応答なし）で、記録上は 253481ms になっている。これは CPU での初回推論が極端に遅いためで、**外れ値として扱う**。ウォームアップ後の11サンプルは 216-580ms に収まっている。
+
+#### 比較表
+
+| 指標 | xsmall NPU | small NPU | xsmall CPU | small CPU |
+|---|---|---|---|---|
+| 中央値 | 31.0 ms | **68.3 ms** | 552.9 ms | **269.6 ms** |
+| 最小 | 26.3 ms | 55.7 ms | 502.8 ms | 216.3 ms |
+| 最大 | 35.5 ms | 80.4 ms | 574.6 ms | 580.3 ms |
+| init | 729 ms | **1468 ms** | 105 ms | 764 ms |
+
+- **NPU は 2.2倍遅くなった**（31.0 -> 68.3ms）。予測の 110-130ms より速い。
+- **CPU は 2.05倍速くなった**（552.9 -> 269.6ms）。これは予測と逆。xsmall の CPU 推論が非効率だった可能性がある。
+- **NPU/CPU 比は 3.9倍**（68.3 / 269.6）。xsmall の 17.8倍から下がった。**指示書の「10倍以上維持」は満たしていない。**
+- init は NPU で 2倍（729 -> 1468ms）。74MB のロードと HTP アップロードのコスト。
+
+### §32.4 精度（4例）
+
+| 読み | xsmall NPU | small NPU | small CPU |
+|---|---|---|---|
+| セイドガタカイ | 制度が高い | **制度が高い** | 精度が高い |
+| カンジヘンカン | 漢字変換 | 漢字変換 | 漢字変換 |
+| ニホンニュウリョク | 日本入力 | 日本入力 | 日本入力 |
+| キョウハテンキ | 今日は天気 | 今日は天気 | 今日は天気 |
+
+- **`セイドガタカイ` の揺れは解消しなかった。** small NPU でも「制度が高い」、small CPU では「精度が高い」。指示書の予測「近接同率が解消される可能性」は外れた。
+- 他の3例は xsmall と同じ結果。
+
+### §32.5 UI経由の確認
+
+長押しテスト:
+
+```text
+ZenzImeLongPressInstrumentedTest
+Time: 9.094
+OK (1 test)
+```
+
+4読みテスト:
+
+```text
+ZenzImeFourReadingInstrumentedTest
+Time: 11.078
+OK (1 test)
+
+zenz_npu_execution_preference=true
+input=[あかさた]
+after=[赤沙多]
+npu_pid=14882
+```
+
+候補バー: `赤沙多 [AI]  明かさた  赤沙汰  あかさた  開かさた  アカサ...`
+
+**xsmall と同一の候補。** small にしても4読みの変換結果は変わらなかった。
+
+安定性テスト:
+
+```text
+ZenzImeStabilityInstrumentedTest
+Time: 76.947
+OK (1 test)
+
+round=1 typed=[あかさた] editor=[赤沙多] pid=15378
+round=12 typed=[あかさた] editor=[あかさた] pid=15378
+conversions=12 elapsed_ms=73754
+end_pid=15378
+```
+
+12ラウンド同一PID、73.8秒。xsmall（73.2秒）とほぼ同じ。**68ms の推論は連続入力で詰まらない。**
+
+### §32.6 第24ラウンドの判定
+
+| # | 目標 | 判定 | 根拠 |
+|---|---|---|---|
+| 1 | モデルの実読確認 | **PASS** | `size_label=small`、トークナイザー同一 |
+| 2 | 差し替えとビルド | **PASS** | APK 202.4MB、モデル 70.4MB 同梱 |
+| 3 | NPU 速度 | **PASS（実測）** | 中央値 68.3ms（予測 110-130ms より速い） |
+| 4 | CPU 速度 | **PASS（実測）** | 中央値 269.6ms（予測 2秒より大幅に速い） |
+| 5 | NPU/CPU 比 10倍以上 | **FAIL** | 3.9倍。xsmall の 17.8倍から低下 |
+| 6 | 精度（4例） | **PASS（実測）** | 3/4 一致。`セイドガタカイ` の揺れは未解消 |
+| 7 | UI長押し | **PASS** | `OK (1 test)` |
+| 8 | 4読み | **PASS** | `赤沙多 [AI]`、xsmall と同一 |
+| 9 | 連続入力の安定性 | **PASS** | 12ラウンド同一PID、73.8秒 |
+| 10 | CPUフォールバック | **PASS** | スイッチOFFで CPU 推論成立 |
+
+**指示書の予測と外れた点が2つ:**
+
+1. **NPU/CPU 比が 10倍を切った**（3.9倍）。small は CPU でも十分速く（269ms）、NPU の優位が相対的に小さくなった。
+2. **CPU が xsmall より速い**（552.9 -> 269.6ms）。パラメータが3.6倍多いのに速いのは、xsmall の CPU 推論が非効率だった可能性がある。
+
+### §32.7 考察
+
+- **68ms は体感で問題ない。** 連続入力テストで詰まらず、長押し後の候補表示も自然。
+- **NPU の意味が薄れた。** CPU 269ms でも実用範囲で、NPU 68ms との差は 200ms。バッテリー消費を考えると CPU の方が良い場面もあるかもしれない。
+- **精度向上は限定的。** 4例では xsmall と同一結果。`セイドガタカイ` の揺れも残る。より長い文や難しい読みで差が出る可能性はあるが、本ラウンドでは確認していない。
+- **init 1468ms は起動時に一度だけ。** 許容範囲だが、アプリ起動直後の初回変換は待たされる。
+
+### §32.8 次の一手
+
+1. より長い文（10読み以上）で xsmall と small の精度差を比較する。
+2. `セイドガタカイ` の揺れの原因を調べる（プロンプトかモデルか）。
+3. NPU/CPU のバッテリー消費を比較する（`dumpsys batterystats`）。
+4. small を採用するか xsmall に戻すか判断する。**現状では small の利点が速度面で見えにくい。**
+
+### §32.9 ローカル状態
+
+- 端末: `.npu` に small モデル版をインストール済み、スイッチON、既定IMEは本番アプリ。
+- モデル: `zenz/build/generated/assets/zenzModel/main/ggml-model-Q5_K_M.gguf`（70.4MB、small）。**xsmall のモデルは上書きされた。**
+- コード変更なし（モデル差し替えのみ）。`local.properties` も未変更（手動配置のため）。
+- push / merge / force-push なし。端末再起動なし。
