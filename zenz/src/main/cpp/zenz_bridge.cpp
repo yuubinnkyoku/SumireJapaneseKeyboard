@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <android/log.h>
 #include <cstring>
 #include <cstdlib>
@@ -736,6 +737,103 @@ static ZenzGenerationResult no_zenz_result(ZenzGenerationTermination termination
     return ZenzGenerationResult{"", termination};
 }
 
+// ------- CPU arbitration (round 20) -------
+//
+// The NPU and the CPU disagree by mean 0.284 / max 0.885 logit (round 19). When
+// the NPU's own top-1 and top-2 are closer than kZenzMarginTau, that gap is small
+// enough for the disagreement to flip the winner, so the whole conversion is
+// recomputed on the CPU and the CPU answer is returned.
+//
+// This guarantees "same answer as the CPU build", not "the true answer". Two CPU
+// implementations already differ by about 0.2 logit on the same weights, so no
+// kernel fix can promise more than this.
+static constexpr float kZenzMarginTau = 1.5f;
+
+// Separate CPU model and context so the NPU session stays loaded. Guarded by
+// g_session.mutex like the main session.
+struct CpuArbitrationSession {
+    llama_model *model = nullptr;
+    const llama_vocab *vocab = nullptr;
+    llama_context *ctx = nullptr;
+    RuntimeConfig config{0, 0, 0, 0};
+};
+
+static CpuArbitrationSession g_cpu_arb;
+
+static void destroy_cpu_arb_context_locked() {
+    if (!g_cpu_arb.ctx) {
+        return;
+    }
+    llama_set_abort_callback(g_cpu_arb.ctx, never_abort, nullptr);
+    llama_synchronize(g_cpu_arb.ctx);
+    llama_free(g_cpu_arb.ctx);
+    g_cpu_arb.ctx = nullptr;
+    g_cpu_arb.config = RuntimeConfig{0, 0, 0, 0};
+}
+
+static void close_cpu_arb_locked() {
+    destroy_cpu_arb_context_locked();
+    if (g_cpu_arb.model) {
+        llama_model_free(g_cpu_arb.model);
+        g_cpu_arb.model = nullptr;
+        g_cpu_arb.vocab = nullptr;
+    }
+}
+
+// Loads the CPU model once and keeps it for the process lifetime.
+static bool ensure_cpu_arb_model_locked() {
+    if (g_cpu_arb.model) {
+        return true;
+    }
+    if (g_model_path.empty()) {
+        LOGE("cpu arbitration: model path is empty");
+        return false;
+    }
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = 0;
+    mparams.load_mode = LLAMA_LOAD_MODE_MMAP;
+    g_cpu_arb.model = llama_model_load_from_file(g_model_path.c_str(), mparams);
+    if (!g_cpu_arb.model) {
+        LOGE("cpu arbitration: failed to load model");
+        return false;
+    }
+    g_cpu_arb.vocab = llama_model_get_vocab(g_cpu_arb.model);
+    if (!g_cpu_arb.vocab) {
+        llama_model_free(g_cpu_arb.model);
+        g_cpu_arb.model = nullptr;
+        LOGE("cpu arbitration: failed to get vocab");
+        return false;
+    }
+    LOGI("cpu arbitration: model loaded");
+    return true;
+}
+
+static llama_context *ensure_cpu_arb_context_locked() {
+    if (!g_cpu_arb.model) {
+        return nullptr;
+    }
+    const RuntimeConfig config = get_runtime_config();
+    if (g_cpu_arb.ctx && same_runtime_config(g_cpu_arb.config, config)) {
+        return g_cpu_arb.ctx;
+    }
+    destroy_cpu_arb_context_locked();
+
+    llama_context_params cparams = llama_context_default_params();
+    cparams.n_ctx = config.n_ctx;
+    cparams.n_threads = config.n_threads;
+    cparams.n_threads_batch = config.n_threads_batch;
+    cparams.n_batch = config.n_batch;
+
+    g_cpu_arb.ctx = llama_init_from_model(g_cpu_arb.model, cparams);
+    if (!g_cpu_arb.ctx) {
+        LOGE("cpu arbitration: failed to create context");
+        return nullptr;
+    }
+    g_cpu_arb.config = config;
+    LOGI("cpu arbitration: context created n_ctx=%d", cparams.n_ctx);
+    return g_cpu_arb.ctx;
+}
+
 #ifdef ZENZ_LOGIT_DUMP
 // Round 19 measurement hook. Prints the top logits at the first decode step so
 // the NPU and CPU runs can be compared on the same prompt. Debug builds only.
@@ -789,6 +887,26 @@ static void dump_top_logits(const float *logits, int32_t n_vocab, int npu, int p
 }
 #endif
 
+#ifdef ZENZ_LOGIT_DUMP
+// Round 20: records whether the margin check fired, so the trigger rate can
+// be aggregated later. Same file sink as the logit dump.
+static void log_margin_decision(int trigger, float gap, int step, bool recomputed) {
+    char line[160];
+    snprintf(line, sizeof(line),
+             "ZENZLOG margin trigger=%d step=%d gap=%.4f recompute=%s",
+             trigger, step, gap, recomputed ? "cpu" : "none");
+    LOGI("%s", line);
+    const char *path = getenv("ZENZ_LOGIT_DUMP_PATH");
+    if (path && path[0]) {
+        FILE *file = fopen(path, "a");
+        if (file) {
+            fprintf(file, "%s\n", line);
+            fclose(file);
+        }
+    }
+}
+#endif
+
 static ZenzGenerationResult finish_zenz_generation(
         const ZenzOutputDecoder &decoder,
         ZenzGenerationTermination termination
@@ -830,23 +948,36 @@ static std::string accepted_zenz_text(const ZenzGenerationResult &result) {
 
 // Swift の pure_greedy_decoding 相当。ただし、候補として返せるのは
 // EOG または Zenz プロトコルマーカーで正常終了した完全な出力だけにする。
-static ZenzGenerationResult pure_greedy_decoding(
+//
+// Round 20: when the model runs on the NPU and its own top-1/top-2 gap drops
+// below kZenzMarginTau, the caller recomputes the whole conversion on the CPU.
+// The margin check is a product feature; only the logging is behind #ifdef.
+struct GreedyDecodeOutcome {
+    ZenzGenerationResult result;
+    // Smallest top-1 minus top-2 gap seen during this decode, and the step it
+    // happened at. Used to decide whether the CPU should arbitrate.
+    float min_gap = std::numeric_limits<float>::max();
+    int min_gap_step = -1;
+};
+
+static GreedyDecodeOutcome greedy_decode_with_margin(
+        llama_model *model,
+        const llama_vocab *vocab,
+        llama_context *ctx,
         const std::string &leftSideContext,
         int maxCount,
         uint64_t request_seq
 ) {
-    std::unique_lock<std::mutex> session_lock(g_session.mutex);
+    GreedyDecodeOutcome outcome;
     if (is_request_stale(request_seq)) {
-        return no_zenz_result(ZenzGenerationTermination::CANCELLED);
+        outcome.result = no_zenz_result(ZenzGenerationTermination::CANCELLED);
+        return outcome;
     }
-    if (!g_model || !g_vocab) {
-        return no_zenz_result(ZenzGenerationTermination::MODEL_UNAVAILABLE);
+    if (!model || !vocab || !ctx) {
+        outcome.result = no_zenz_result(ZenzGenerationTermination::MODEL_UNAVAILABLE);
+        return outcome;
     }
 
-    llama_context *ctx = ensure_session_context_locked();
-    if (!ctx) {
-        return no_zenz_result(ZenzGenerationTermination::DECODE_ERROR);
-    }
     clear_session_kv_locked(ctx);
 
     AbortRequestState abort_state{request_seq};
@@ -859,15 +990,16 @@ static ZenzGenerationResult pure_greedy_decoding(
     auto prompt_tokens = tokenize_text(pre, /*add_bos=*/false, /*add_eos=*/false);
     if (prompt_tokens.empty()) {
         clear_abort_callback();
-        return no_zenz_result(ZenzGenerationTermination::INVALID_REQUEST);
+        outcome.result = no_zenz_result(ZenzGenerationTermination::INVALID_REQUEST);
+        return outcome;
     }
 
     const RuntimeConfig config = get_runtime_config();
     if (config.n_ctx <= 0 || prompt_tokens.size() >= static_cast<size_t>(config.n_ctx)) {
-        clear_abort_callback();
         LOGE("pure_greedy_decoding: prompt exceeds context window: prompt=%zu n_ctx=%d",
              prompt_tokens.size(), config.n_ctx);
-        return no_zenz_result(ZenzGenerationTermination::CONTEXT_LIMIT);
+        outcome.result = no_zenz_result(ZenzGenerationTermination::CONTEXT_LIMIT);
+        return outcome;
     }
 
     const int requested_count = std::max(maxCount, 0);
@@ -875,10 +1007,11 @@ static ZenzGenerationResult pure_greedy_decoding(
     const int generation_limit = std::min(requested_count, available_count);
     if (generation_limit <= 0) {
         clear_abort_callback();
-        return no_zenz_result(
+        outcome.result = no_zenz_result(
                 requested_count <= 0
                         ? ZenzGenerationTermination::INVALID_REQUEST
                         : ZenzGenerationTermination::CONTEXT_LIMIT);
+        return outcome;
     }
 
     {
@@ -893,27 +1026,30 @@ static ZenzGenerationResult pure_greedy_decoding(
                 LOGI("pure_greedy_decoding aborted while decoding prompt");
             }
             clear_abort_callback();
-            return no_zenz_result(
+            outcome.result = no_zenz_result(
                     is_request_stale(request_seq)
                             ? ZenzGenerationTermination::CANCELLED
                             : ZenzGenerationTermination::DECODE_ERROR);
+            return outcome;
         }
     }
 
-    const int32_t n_vocab = llama_vocab_n_tokens(g_vocab);
+    const int32_t n_vocab = llama_vocab_n_tokens(vocab);
     ZenzOutputDecoder decoder;
 
     for (int i = 0; i < generation_limit; ++i) {
         if (is_request_stale(request_seq)) {
             clear_abort_callback();
-            return no_zenz_result(ZenzGenerationTermination::CANCELLED);
+            outcome.result = no_zenz_result(ZenzGenerationTermination::CANCELLED);
+            return outcome;
         }
 
         float *logits = llama_get_logits_ith(ctx, -1);
         if (!logits) {
             LOGE("logits is null");
             clear_abort_callback();
-            return no_zenz_result(ZenzGenerationTermination::DECODE_ERROR);
+            outcome.result = no_zenz_result(ZenzGenerationTermination::DECODE_ERROR);
+            return outcome;
         }
 
 #ifdef ZENZ_LOGIT_DUMP
@@ -923,37 +1059,50 @@ static ZenzGenerationResult pure_greedy_decoding(
         }
 #endif
 
+        // One pass finds the top two, so the margin costs nothing extra.
         int best_id = 0;
         float best_logit = logits[0];
+        float second_logit = -std::numeric_limits<float>::infinity();
         for (int32_t tid = 1; tid < n_vocab; ++tid) {
-            if (logits[tid] > best_logit) {
-                best_logit = logits[tid];
+            const float value = logits[tid];
+            if (value > best_logit) {
+                second_logit = best_logit;
+                best_logit = value;
                 best_id = tid;
+            } else if (value > second_logit) {
+                second_logit = value;
             }
         }
 
+        const float gap = best_logit - second_logit;
+        if (gap < outcome.min_gap) {
+            outcome.min_gap = gap;
+            outcome.min_gap_step = i;
+        }
+
         llama_token next = (llama_token) best_id;
-        if (llama_vocab_is_eog(g_vocab, next)) {
-            const ZenzGenerationResult result = finish_zenz_generation(
+        if (llama_vocab_is_eog(vocab, next)) {
+            outcome.result = finish_zenz_generation(
                     decoder,
                     ZenzGenerationTermination::EOG);
             clear_abort_callback();
-            return result;
+            return outcome;
         }
 
         const std::string piece = token_to_piece_str(next);
         const ZenzOutputDecoder::AppendResult append_result =
                 decoder.append_piece(piece);
         if (append_result == ZenzOutputDecoder::AppendResult::PROTOCOL_MARKER) {
-            const ZenzGenerationResult result = finish_zenz_generation(
+            outcome.result = finish_zenz_generation(
                     decoder,
                     ZenzGenerationTermination::PROTOCOL_MARKER);
             clear_abort_callback();
-            return result;
+            return outcome;
         }
         if (append_result == ZenzOutputDecoder::AppendResult::INVALID_UTF8) {
             clear_abort_callback();
-            return no_zenz_result(ZenzGenerationTermination::INVALID_UTF8);
+            outcome.result = no_zenz_result(ZenzGenerationTermination::INVALID_UTF8);
+            return outcome;
         }
 
         // The last allowed token does not need to be decoded again.  Reaching
@@ -968,17 +1117,90 @@ static ZenzGenerationResult pure_greedy_decoding(
             if (is_request_stale(request_seq)) {
                 LOGI("pure_greedy_decoding aborted during token generation");
                 clear_abort_callback();
-                return no_zenz_result(ZenzGenerationTermination::CANCELLED);
+                outcome.result = no_zenz_result(ZenzGenerationTermination::CANCELLED);
+                return outcome;
             } else {
                 LOGE("llama_decode(step) failed: %d", rc);
             }
             clear_abort_callback();
-            return no_zenz_result(ZenzGenerationTermination::DECODE_ERROR);
+            outcome.result = no_zenz_result(ZenzGenerationTermination::DECODE_ERROR);
+            return outcome;
         }
     }
 
     clear_abort_callback();
-    return no_zenz_result(ZenzGenerationTermination::TOKEN_LIMIT);
+    outcome.result = no_zenz_result(ZenzGenerationTermination::TOKEN_LIMIT);
+    return outcome;
+}
+
+// Runs the same conversion on the CPU session. Called with g_session.mutex held.
+static GreedyDecodeOutcome cpu_arbitrated_decode_locked(
+        const std::string &leftSideContext,
+        int maxCount,
+        uint64_t request_seq
+) {
+    GreedyDecodeOutcome outcome;
+    if (!ensure_cpu_arb_model_locked()) {
+        outcome.result = no_zenz_result(ZenzGenerationTermination::MODEL_UNAVAILABLE);
+        return outcome;
+    }
+    llama_context *cpu_ctx = ensure_cpu_arb_context_locked();
+    if (!cpu_ctx) {
+        outcome.result = no_zenz_result(ZenzGenerationTermination::DECODE_ERROR);
+        return outcome;
+    }
+    return greedy_decode_with_margin(
+            g_cpu_arb.model,
+            g_cpu_arb.vocab,
+            cpu_ctx,
+            leftSideContext,
+            maxCount,
+            request_seq);
+}
+
+static ZenzGenerationResult pure_greedy_decoding(
+        const std::string &leftSideContext,
+        int maxCount,
+        uint64_t request_seq
+) {
+    std::unique_lock<std::mutex> session_lock(g_session.mutex);
+    if (!g_model || !g_vocab) {
+        return no_zenz_result(ZenzGenerationTermination::MODEL_UNAVAILABLE);
+    }
+    llama_context *ctx = ensure_session_context_locked();
+    if (!ctx) {
+        return no_zenz_result(ZenzGenerationTermination::DECODE_ERROR);
+    }
+
+    const bool on_npu = g_model_is_npu.load(std::memory_order_relaxed);
+    const GreedyDecodeOutcome primary = greedy_decode_with_margin(
+            g_model, g_vocab, ctx, leftSideContext, maxCount, request_seq);
+
+    // Only the NPU path arbitrates. The CPU path is already the reference, and
+    // the fallback path has latched the CPU for the rest of the process.
+    if (!on_npu || primary.min_gap >= kZenzMarginTau) {
+#ifdef ZENZ_LOGIT_DUMP
+        log_margin_decision(0, primary.min_gap, primary.min_gap_step, false);
+#endif
+        return primary.result;
+    }
+
+    LOGI("margin arbitration: gap=%.4f step=%d < tau=%.2f, recomputing on cpu",
+         primary.min_gap, primary.min_gap_step, kZenzMarginTau);
+    const GreedyDecodeOutcome arbitrated = cpu_arbitrated_decode_locked(
+            leftSideContext, maxCount, request_seq);
+#ifdef ZENZ_LOGIT_DUMP
+    log_margin_decision(1, primary.min_gap, primary.min_gap_step,
+                        arbitrated.result.accepted());
+#endif
+    if (arbitrated.result.accepted()) {
+        LOGI("margin arbitration: cpu answer accepted");
+        return arbitrated.result;
+    }
+    // A failed CPU recompute must not lose the NPU answer.
+    LOGE("margin arbitration: cpu recompute failed (%s), keeping npu result",
+         zenz_generation_termination_name(arbitrated.result.termination));
+    return primary.result;
 }
 
 static CandidateEvaluationResult draft_mismatch(
@@ -1395,6 +1617,7 @@ Java_com_kazumaproject_zenz_ZenzEngine_closeModel(
     g_request_seq.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(g_session.mutex);
     destroy_session_context_locked();
+    close_cpu_arb_locked();
 
     if (g_model) {
         llama_model_free(g_model);
