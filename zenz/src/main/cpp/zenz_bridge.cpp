@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cmath>
+#include <cstdio>
 #include <android/log.h>
 #include <cstring>
 #include <cstdlib>
@@ -735,6 +736,59 @@ static ZenzGenerationResult no_zenz_result(ZenzGenerationTermination termination
     return ZenzGenerationResult{"", termination};
 }
 
+#ifdef ZENZ_LOGIT_DUMP
+// Round 19 measurement hook. Prints the top logits at the first decode step so
+// the NPU and CPU runs can be compared on the same prompt. Debug builds only.
+//
+// logcat is suppressed on this device (log.tag=S), so the line also goes to a
+// file next to the model. The path comes from ZENZ_LOGIT_DUMP_PATH.
+static void dump_top_logits(const float *logits, int32_t n_vocab, int npu, int pos) {
+    struct Entry {
+        int id;
+        float value;
+    };
+    constexpr int kTop = 20;
+    std::vector<Entry> top;
+    top.reserve(kTop + 1);
+    for (int32_t tid = 0; tid < n_vocab; ++tid) {
+        const float value = logits[tid];
+        if (top.size() < kTop) {
+            top.push_back({tid, value});
+            std::sort(top.begin(), top.end(),
+                      [](const Entry &a, const Entry &b) { return a.value > b.value; });
+        } else if (value > top.back().value) {
+            top.back() = {tid, value};
+            std::sort(top.begin(), top.end(),
+                      [](const Entry &a, const Entry &b) { return a.value > b.value; });
+        }
+    }
+
+    std::string line = "ZENZLOG pos=" + std::to_string(pos) +
+                       " npu=" + std::to_string(npu);
+    for (const Entry &entry : top) {
+        char buffer[64];
+        snprintf(buffer, sizeof(buffer), " | tok=%d val=%.4f", entry.id, entry.value);
+        line += buffer;
+    }
+    // The two tokens that decide 制度/精度 must always be present.
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer), " | tok=1246 val=%.4f", logits[1246]);
+    line += buffer;
+    snprintf(buffer, sizeof(buffer), " | tok=743 val=%.4f", logits[743]);
+    line += buffer;
+    LOGI("%s", line.c_str());
+
+    const char *path = getenv("ZENZ_LOGIT_DUMP_PATH");
+    if (path && path[0]) {
+        FILE *file = fopen(path, "a");
+        if (file) {
+            fprintf(file, "%s\n", line.c_str());
+            fclose(file);
+        }
+    }
+}
+#endif
+
 static ZenzGenerationResult finish_zenz_generation(
         const ZenzOutputDecoder &decoder,
         ZenzGenerationTermination termination
@@ -861,6 +915,13 @@ static ZenzGenerationResult pure_greedy_decoding(
             clear_abort_callback();
             return no_zenz_result(ZenzGenerationTermination::DECODE_ERROR);
         }
+
+#ifdef ZENZ_LOGIT_DUMP
+        if (i == 0) {
+            dump_top_logits(logits, n_vocab,
+                            g_model_is_npu.load(std::memory_order_relaxed) ? 1 : 0, 0);
+        }
+#endif
 
         int best_id = 0;
         float best_logit = logits[0];
@@ -1411,6 +1472,26 @@ Java_com_kazumaproject_zenz_ZenzEngine_setNpuEnabled(
     }
     g_npu_enabled.store(enabled, std::memory_order_relaxed);
     LOGI("setNpuEnabled: %d", (int) enabled);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_kazumaproject_zenz_ZenzEngine_setLogitDumpPath(
+        JNIEnv *env,
+        jobject /*thiz*/,
+        jstring jPath
+) {
+#ifdef ZENZ_LOGIT_DUMP
+    const char *c_path = env->GetStringUTFChars(jPath, nullptr);
+    if (c_path) {
+        setenv("ZENZ_LOGIT_DUMP_PATH", c_path, 1);
+        LOGI("setLogitDumpPath: %s", c_path);
+        env->ReleaseStringUTFChars(jPath, c_path);
+    }
+#else
+    (void) env;
+    (void) jPath;
+#endif
 }
 
 extern "C"

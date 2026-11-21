@@ -17,4 +17,6 @@ oneway interface IZenzRuntime {
     void cancel(long requestId);
     void finishDraftReview(String draftReviewId);
     void closeEngine();
+    // Round 19 measurement hook. No-op unless the build sets ZENZ_LOGIT_DUMP.
+    void setLogitDumpPath(String path);
 }

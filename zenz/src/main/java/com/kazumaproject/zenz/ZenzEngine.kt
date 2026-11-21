@@ -30,6 +30,9 @@ object ZenzEngine {
     /** 診断用: ggmlバックエンドのデバイス一覧。 */
     external fun getBackendDeviceSummary(): String
 
+    /** Round 19 measurement hook. No-op unless the build sets ZENZ_LOGIT_DUMP. */
+    external fun setLogitDumpPath(path: String)
+
     external fun generate(
         prompt: String,
         maxTokens: Int

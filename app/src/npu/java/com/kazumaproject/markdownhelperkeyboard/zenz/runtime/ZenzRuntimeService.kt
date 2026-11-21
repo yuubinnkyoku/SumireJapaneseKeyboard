@@ -173,6 +173,10 @@ class ZenzRuntimeService : Service() {
                 closeNativeRuntime()
             }
         }
+
+        override fun setLogitDumpPath(path: String) {
+            ZenzEngine.setLogitDumpPath(path)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder = binder

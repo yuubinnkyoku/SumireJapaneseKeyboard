@@ -72,6 +72,12 @@ target_include_directories(zenz PRIVATE
 
 find_library(log-lib log)
 
+# Round 19 measurement hook. Off by default so release builds are unaffected.
+option(ZENZ_LOGIT_DUMP "Print top logits for NPU/CPU comparison" OFF)
+if(ZENZ_LOGIT_DUMP)
+    target_compile_definitions(zenz PRIVATE ZENZ_LOGIT_DUMP=1)
+endif()
+
 if(ZENZ_ENABLE_NPU)
     target_compile_definitions(zenz PRIVATE ZENZ_ENABLE_NPU=1)
 

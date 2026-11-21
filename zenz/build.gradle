@@ -88,6 +88,12 @@ if (zenzNpuEnabled) {
     }
 }
 
+// Round 19 measurement hook. Enable with -PzenzLogitDump=true.
+def zenzLogitDump = providers.gradleProperty("zenzLogitDump").orNull == "true"
+if (zenzLogitDump) {
+    zenzNpuCmakeArgs += "-DZENZ_LOGIT_DUMP=ON"
+}
+
 // skelを格納するjniLibsの生成先。arm64-v8a決め打ち(NPU搭載端末はarm64のみ)。
 def zenzNpuJniLibsRoot = layout.buildDirectory.dir("generated/zenzNpuJniLibs")
 
