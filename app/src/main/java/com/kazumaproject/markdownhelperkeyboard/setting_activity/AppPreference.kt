@@ -786,6 +786,9 @@ object AppPreference {
     private val ZENZ_NPU_EXECUTION_PREFERENCE =
         Pair("zenz_npu_execution_preference", true)
 
+    private val ZENZ_MODEL_PREFERENCE =
+        Pair("zenz_model_preference", "xsmall")
+
     private val ZENZ_DEBOUNCE_TIME_PREFERENCE = Pair("zenz_debounce_time_preference", 300)
 
     private val ZENZ_MAXIMUM_LETTER_SIZE_PREFERENCE =
@@ -4117,6 +4120,23 @@ object AppPreference {
         )
         set(value) = preferences.edit {
             it.putBoolean(ZENZ_NPU_EXECUTION_PREFERENCE.first, value)
+        }
+
+    /**
+     * Which zenz model to load: "xsmall" or "small".
+     *
+     * Only the npu flavor ships both files and shows the switch. The value is read
+     * when the model loads, so a change applies on the next engine start. The
+     * selection version is bumped so the IME drops its cached model path.
+     */
+    var zenz_model_preference: String
+        get() = preferences.getString(
+            ZENZ_MODEL_PREFERENCE.first,
+            ZENZ_MODEL_PREFERENCE.second
+        ) ?: ZENZ_MODEL_PREFERENCE.second
+        set(value) = preferences.edit {
+            it.putString(ZENZ_MODEL_PREFERENCE.first, value)
+            it.putString(ZENZ_MODEL_SELECTION_VERSION, java.util.UUID.randomUUID().toString())
         }
 
     var zenz_debounce_time_preference: Int?

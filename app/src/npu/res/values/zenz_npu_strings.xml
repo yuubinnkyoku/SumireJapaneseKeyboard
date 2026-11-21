@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- npu flavor only: model choice for the zenz engine. -->
+    <string name="zenz_model_preference_title">AI変換に使うモデル</string>
+    <string name="zenz_model_preference_summary">小さいモデルは高速、大きいモデルは高精度です。変更は次回の変換エンジン起動時に反映されます。</string>
+
+    <string-array name="zenz_model_entries">
+        <item>xsmall（高速・21MB）</item>
+        <item>small（高精度・74MB）</item>
+    </string-array>
+
+    <string-array name="zenz_model_values">
+        <item>xsmall</item>
+        <item>small</item>
+    </string-array>
+</resources>

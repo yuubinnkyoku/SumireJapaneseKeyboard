@@ -31980,8 +31980,24 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
         )
     }
 
+    /** True when the APK ships the optional second zenz model (npu flavor only). */
+    private fun hasSecondZenzModel(): Boolean = runCatching {
+        assets.open("ggml-model-small-Q5_K_M.gguf").close()
+        true
+    }.getOrDefault(false)
+
     private fun resolveZenzModelPath(customUri: String): String? {
-        val defaultAssetFileName = "ggml-model-Q5_K_M.gguf"
+        // The npu flavor ships a second, larger model and lets the user pick it.
+        // Other flavors only have the default asset, so the name stays fixed.
+        val defaultAssetFileName = if (BuildConfig.APP_EDITION == "full" && hasSecondZenzModel()) {
+            if (AppPreference.zenz_model_preference == "small") {
+                "ggml-model-small-Q5_K_M.gguf"
+            } else {
+                "ggml-model-Q5_K_M.gguf"
+            }
+        } else {
+            "ggml-model-Q5_K_M.gguf"
+        }
         val defaultDestFile = File(filesDir, defaultAssetFileName)
 
         fun ensureDefaultModelCopied(): File {
