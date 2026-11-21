@@ -840,6 +840,43 @@ static llama_context *ensure_cpu_arb_context_locked() {
 //
 // logcat is suppressed on this device (log.tag=S), so the line also goes to a
 // file next to the model. The path comes from ZENZ_LOGIT_DUMP_PATH.
+// Round 21: one line per generation step with the top three tokens, so the
+// NPU and CPU runs can be compared step by step. The round 19 dump only
+// covered step 0, which does not represent the deeper steps.
+static void dump_step_logits(const float *logits, int32_t n_vocab, int npu, int step) {
+    int ids[3] = {-1, -1, -1};
+    float vals[3] = {-std::numeric_limits<float>::infinity(),
+                    -std::numeric_limits<float>::infinity(),
+                    -std::numeric_limits<float>::infinity()};
+    for (int32_t tid = 0; tid < n_vocab; ++tid) {
+        const float value = logits[tid];
+        if (value > vals[0]) {
+            vals[2] = vals[1]; ids[2] = ids[1];
+            vals[1] = vals[0]; ids[1] = ids[0];
+            vals[0] = value;    ids[0] = tid;
+        } else if (value > vals[1]) {
+            vals[2] = vals[1]; ids[2] = ids[1];
+            vals[1] = value;    ids[1] = tid;
+        } else if (value > vals[2]) {
+            vals[2] = value;    ids[2] = tid;
+        }
+    }
+    char line[256];
+    snprintf(line, sizeof(line),
+             "ZENZLOG step=%d npu=%d t1=%d:%.4f t2=%d:%.4f t3=%d:%.4f",
+             step, npu,
+             ids[0], vals[0], ids[1], vals[1], ids[2], vals[2]);
+    LOGI("%s", line);
+    const char *path = getenv("ZENZ_LOGIT_DUMP_PATH");
+    if (path && path[0]) {
+        FILE *file = fopen(path, "a");
+        if (file) {
+            fprintf(file, "%s\n", line);
+            fclose(file);
+        }
+    }
+}
+
 static void dump_top_logits(const float *logits, int32_t n_vocab, int npu, int pos) {
     struct Entry {
         int id;
@@ -966,7 +1003,8 @@ static GreedyDecodeOutcome greedy_decode_with_margin(
         llama_context *ctx,
         const std::string &leftSideContext,
         int maxCount,
-        uint64_t request_seq
+        uint64_t request_seq,
+        bool is_npu
 ) {
     GreedyDecodeOutcome outcome;
     if (is_request_stale(request_seq)) {
@@ -1053,9 +1091,9 @@ static GreedyDecodeOutcome greedy_decode_with_margin(
         }
 
 #ifdef ZENZ_LOGIT_DUMP
+        dump_step_logits(logits, n_vocab, is_npu ? 1 : 0, i);
         if (i == 0) {
-            dump_top_logits(logits, n_vocab,
-                            g_model_is_npu.load(std::memory_order_relaxed) ? 1 : 0, 0);
+            dump_top_logits(logits, n_vocab, is_npu ? 1 : 0, 0);
         }
 #endif
 
@@ -1155,7 +1193,8 @@ static GreedyDecodeOutcome cpu_arbitrated_decode_locked(
             cpu_ctx,
             leftSideContext,
             maxCount,
-            request_seq);
+            request_seq,
+            /*is_npu=*/false);
 }
 
 static ZenzGenerationResult pure_greedy_decoding(
@@ -1174,7 +1213,7 @@ static ZenzGenerationResult pure_greedy_decoding(
 
     const bool on_npu = g_model_is_npu.load(std::memory_order_relaxed);
     const GreedyDecodeOutcome primary = greedy_decode_with_margin(
-            g_model, g_vocab, ctx, leftSideContext, maxCount, request_seq);
+            g_model, g_vocab, ctx, leftSideContext, maxCount, request_seq, on_npu);
 
     // Only the NPU path arbitrates. The CPU path is already the reference, and
     // the fallback path has latched the CPU for the rest of the process.
