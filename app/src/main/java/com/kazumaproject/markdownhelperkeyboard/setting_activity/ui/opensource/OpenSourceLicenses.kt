@@ -108,6 +108,14 @@ internal class OpenSourceLicenses(private val context: Context) {
                         original("software-licenses/zenz-model-card.txt") + paragraph(text(R.string.license_copyright_unknown)) +
                             original("licenses/sources/apache-2.txt"))
                 },
+                LicenseItem("zenz-model-small", "Zenz v3.2 small", text(R.string.license_zenz_small_summary)) {
+                    document("Zenz v3.2 small", text(R.string.license_zenz_small_overview),
+                        link("https://huggingface.co/Miwa-Keita/zenz-v3.2-small-gguf/blob/ef3e66e3665fe6a19598e6578e9b88a994b647fd/README.md"),
+                        "ef3e66e3665fe6a19598e6578e9b88a994b647fd · Q5_K_M",
+                        text(R.string.license_zenz_small_changes), "CC BY-SA 4.0",
+                        original("software-licenses/zenz-model-small-card.txt") +
+                            original("licenses/sources/cc-by-sa-4.txt"))
+                },
                 LicenseItem("llama.cpp", "azooKey/llama.cpp", "MIT License") {
                     document("azooKey/llama.cpp", text(R.string.license_llama_overview),
                         link("https://github.com/azooKey/llama.cpp/tree/88b97a47dc7f5892e2d5a6856fbe9cfe237f9e5c"),

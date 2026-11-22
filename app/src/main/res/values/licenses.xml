@@ -28,6 +28,9 @@
     <string name="license_zenz_summary">Bundled prediction model · Apache License 2.0</string>
     <string name="license_zenz_overview">The Zenz prediction model is bundled with the Full edition. Its pinned model card declares Apache License 2.0.</string>
     <string name="license_zenz_changes">Converted to GGUF and quantized as Q5_K_M for on-device inference.</string>
+    <string name="license_zenz_small_summary">Bundled prediction model (higher accuracy) · CC BY-SA 4.0</string>
+    <string name="license_zenz_small_overview">The higher-accuracy Zenz prediction model bundled with the NPU edition. Its pinned model card declares CC BY-SA 4.0.</string>
+    <string name="license_zenz_small_changes">Converted to GGUF and quantized as Q5_K_M for on-device inference. The model weights are unchanged.</string>
     <string name="license_llama_overview">Native inference code used by Zenz.</string>
     <string name="license_llama_changes">Built for Android and linked into the Zenz JNI library.</string>
     <string name="license_external_models">User-provided models</string>

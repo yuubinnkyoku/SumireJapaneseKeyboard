@@ -28,6 +28,9 @@
     <string name="license_zenz_summary">同梱の予測モデル · Apache License 2.0</string>
     <string name="license_zenz_overview">Full 版に同梱する Zenz 予測モデルです。固定版のモデルカードでは Apache License 2.0 が宣言されています。</string>
     <string name="license_zenz_changes">端末内での推論に使用するため、GGUF 形式への変換と Q5_K_M による量子化が行われています。</string>
+    <string name="license_zenz_small_summary">同梱の予測モデル（高精度版） · CC BY-SA 4.0</string>
+    <string name="license_zenz_small_overview">NPU 版に同梱する Zenz 予測モデルの高精度版です。固定版のモデルカードでは CC BY-SA 4.0 が宣言されています。</string>
+    <string name="license_zenz_small_changes">端末内での推論に使用するため、GGUF 形式への変換と Q5_K_M による量子化が行われています。モデルの重みは変更していません。</string>
     <string name="license_llama_overview">Zenz の推論に使用するネイティブコードです。</string>
     <string name="license_llama_changes">Android 向けにビルドし、Zenz の JNI ライブラリにリンクしています。</string>
     <string name="license_external_models">ユーザーが追加するモデル</string>
