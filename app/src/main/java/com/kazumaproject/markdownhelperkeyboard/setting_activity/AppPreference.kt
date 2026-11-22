@@ -789,6 +789,12 @@ object AppPreference {
     private val ZENZ_MODEL_PREFERENCE =
         Pair("zenz_model_preference", "xsmall")
 
+    private val ZENZ_MARGIN_ARBITRATION_PREFERENCE =
+        Pair("zenz_margin_arbitration_preference", true)
+
+    private val ZENZ_MARGIN_TAU_PREFERENCE =
+        Pair("zenz_margin_tau_preference", 15)   // tenths, so 15 means 1.5
+
     private val ZENZ_DEBOUNCE_TIME_PREFERENCE = Pair("zenz_debounce_time_preference", 300)
 
     private val ZENZ_MAXIMUM_LETTER_SIZE_PREFERENCE =
@@ -4137,6 +4143,31 @@ object AppPreference {
         set(value) = preferences.edit {
             it.putString(ZENZ_MODEL_PREFERENCE.first, value)
             it.putString(ZENZ_MODEL_SELECTION_VERSION, java.util.UUID.randomUUID().toString())
+        }
+
+    /**
+     * Recompute thin-margin conversions on the CPU.
+     *
+     * The NPU and the CPU disagree by mean 0.284 logit, so a conversion the NPU is
+     * unsure about can flip. Turning this on trades speed for the CPU answer.
+     */
+    var zenz_margin_arbitration_preference: Boolean
+        get() = preferences.getBoolean(
+            ZENZ_MARGIN_ARBITRATION_PREFERENCE.first,
+            ZENZ_MARGIN_ARBITRATION_PREFERENCE.second
+        )
+        set(value) = preferences.edit {
+            it.putBoolean(ZENZ_MARGIN_ARBITRATION_PREFERENCE.first, value)
+        }
+
+    /** Arbitration threshold in tenths of a logit. 0 disables it. */
+    var zenz_margin_tau_preference: Int
+        get() = preferences.getInt(
+            ZENZ_MARGIN_TAU_PREFERENCE.first,
+            ZENZ_MARGIN_TAU_PREFERENCE.second
+        )
+        set(value) = preferences.edit {
+            it.putInt(ZENZ_MARGIN_TAU_PREFERENCE.first, value)
         }
 
     var zenz_debounce_time_preference: Int?

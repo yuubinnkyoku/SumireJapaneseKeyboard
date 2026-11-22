@@ -747,7 +747,9 @@ static ZenzGenerationResult no_zenz_result(ZenzGenerationTermination termination
 // This guarantees "same answer as the CPU build", not "the true answer". Two CPU
 // implementations already differ by about 0.2 logit on the same weights, so no
 // kernel fix can promise more than this.
-static constexpr float kZenzMarginTau = 1.5f;
+// Runtime value so the settings screen can trade speed against safety.
+// 0 disables the arbitration entirely.
+static std::atomic<float> g_margin_tau{1.5f};
 
 // Separate CPU model and context so the NPU session stays loaded. Guarded by
 // g_session.mutex like the main session.
@@ -1004,10 +1006,16 @@ static GreedyDecodeOutcome greedy_decode_with_margin(
         const std::string &leftSideContext,
         int maxCount,
         uint64_t request_seq,
-        bool is_npu
+        bool is_npu,
+        bool ignore_stale
 ) {
     GreedyDecodeOutcome outcome;
-    if (is_request_stale(request_seq)) {
+    // The CPU arbitration runs while the IME keeps sending new requests, so the
+    // request sequence moves on and every decode would abort as stale. The
+    // recompute is short and its answer is still the one we want, so it ignores
+    // the staleness check.
+    const auto stale = [&]() { return !ignore_stale && is_request_stale(request_seq); };
+    if (stale()) {
         outcome.result = no_zenz_result(ZenzGenerationTermination::CANCELLED);
         return outcome;
     }
@@ -1019,7 +1027,8 @@ static GreedyDecodeOutcome greedy_decode_with_margin(
     clear_session_kv_locked(ctx);
 
     AbortRequestState abort_state{request_seq};
-    llama_set_abort_callback(ctx, abort_if_stale, &abort_state);
+    llama_set_abort_callback(ctx, ignore_stale ? never_abort : abort_if_stale,
+                             ignore_stale ? nullptr : &abort_state);
     const auto clear_abort_callback = [&]() {
         llama_set_abort_callback(ctx, never_abort, nullptr);
     };
@@ -1060,12 +1069,12 @@ static GreedyDecodeOutcome greedy_decode_with_margin(
         int rc = llama_decode(ctx, batch);
         if (rc != 0) {
             LOGE("llama_decode(prompt) failed: %d", rc);
-            if (is_request_stale(request_seq)) {
+            if (stale()) {
                 LOGI("pure_greedy_decoding aborted while decoding prompt");
             }
             clear_abort_callback();
             outcome.result = no_zenz_result(
-                    is_request_stale(request_seq)
+                    stale()
                             ? ZenzGenerationTermination::CANCELLED
                             : ZenzGenerationTermination::DECODE_ERROR);
             return outcome;
@@ -1076,7 +1085,7 @@ static GreedyDecodeOutcome greedy_decode_with_margin(
     ZenzOutputDecoder decoder;
 
     for (int i = 0; i < generation_limit; ++i) {
-        if (is_request_stale(request_seq)) {
+        if (stale()) {
             clear_abort_callback();
             outcome.result = no_zenz_result(ZenzGenerationTermination::CANCELLED);
             return outcome;
@@ -1152,7 +1161,7 @@ static GreedyDecodeOutcome greedy_decode_with_margin(
         llama_batch next_batch = llama_batch_get_one(&next, 1);
         int rc = llama_decode(ctx, next_batch);
         if (rc != 0) {
-            if (is_request_stale(request_seq)) {
+            if (stale()) {
                 LOGI("pure_greedy_decoding aborted during token generation");
                 clear_abort_callback();
                 outcome.result = no_zenz_result(ZenzGenerationTermination::CANCELLED);
@@ -1194,7 +1203,8 @@ static GreedyDecodeOutcome cpu_arbitrated_decode_locked(
             leftSideContext,
             maxCount,
             request_seq,
-            /*is_npu=*/false);
+            /*is_npu=*/false,
+            /*ignore_stale=*/true);
 }
 
 static ZenzGenerationResult pure_greedy_decoding(
@@ -1213,11 +1223,13 @@ static ZenzGenerationResult pure_greedy_decoding(
 
     const bool on_npu = g_model_is_npu.load(std::memory_order_relaxed);
     const GreedyDecodeOutcome primary = greedy_decode_with_margin(
-            g_model, g_vocab, ctx, leftSideContext, maxCount, request_seq, on_npu);
+            g_model, g_vocab, ctx, leftSideContext, maxCount, request_seq, on_npu,
+            /*ignore_stale=*/false);
 
     // Only the NPU path arbitrates. The CPU path is already the reference, and
     // the fallback path has latched the CPU for the rest of the process.
-    if (!on_npu || primary.min_gap >= kZenzMarginTau) {
+    const float tau = g_margin_tau.load(std::memory_order_relaxed);
+    if (!on_npu || tau <= 0.0f || primary.min_gap >= tau) {
 #ifdef ZENZ_LOGIT_DUMP
         log_margin_decision(0, primary.min_gap, primary.min_gap_step, false);
 #endif
@@ -1225,7 +1237,7 @@ static ZenzGenerationResult pure_greedy_decoding(
     }
 
     LOGI("margin arbitration: gap=%.4f step=%d < tau=%.2f, recomputing on cpu",
-         primary.min_gap, primary.min_gap_step, kZenzMarginTau);
+         primary.min_gap, primary.min_gap_step, tau);
     const GreedyDecodeOutcome arbitrated = cpu_arbitrated_decode_locked(
             leftSideContext, maxCount, request_seq);
 #ifdef ZENZ_LOGIT_DUMP
@@ -1754,6 +1766,18 @@ Java_com_kazumaproject_zenz_ZenzEngine_setLogitDumpPath(
     (void) env;
     (void) jPath;
 #endif
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_kazumaproject_zenz_ZenzEngine_setMarginTau(
+        JNIEnv * /*env*/,
+        jobject /*thiz*/,
+        jfloat jTau
+) {
+    const float tau = jTau > 0.0f ? (float) jTau : 0.0f;
+    g_margin_tau.store(tau, std::memory_order_relaxed);
+    LOGI("setMarginTau: %.2f", tau);
 }
 
 extern "C"

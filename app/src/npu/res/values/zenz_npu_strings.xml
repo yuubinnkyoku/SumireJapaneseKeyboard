@@ -4,6 +4,12 @@
     <string name="zenz_model_preference_title">AI変換に使うモデル</string>
     <string name="zenz_model_preference_summary">小さいモデルは高速、大きいモデルは高精度です。変更は次回の変換エンジン起動時（キーボードの切り替え、またはアプリの再起動）に反映されます。同梱されていないモデルを選んだ場合は自動的に既定のモデルを使います。</string>
 
+    <string name="zenz_margin_arbitration_title">迷った変換をCPUで計算し直す</string>
+    <string name="zenz_margin_arbitration_summary">NPUの判断が僅差のとき、CPUで計算し直してCPUの結果を返します。精度は上がりますが、その変換だけ遅くなります。オフにすると常にNPUの結果をそのまま使います。</string>
+
+    <string name="zenz_margin_tau_title">計算し直す閾値</string>
+    <string name="zenz_margin_tau_summary">1位と2位の差がこの値より小さいときに計算し直します。大きくすると精度優先で遅くなり、小さくすると速度優先になります。0で無効。</string>
+
     <string-array name="zenz_model_entries">
         <item>xsmall（高速・21MB）</item>
         <item>small（高精度・74MB）</item>

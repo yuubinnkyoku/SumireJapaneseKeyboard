@@ -27,6 +27,14 @@ object ZenzEngine {
     /** Hexagonデバイスが利用可能か。CPUビルドでは常にfalse。 */
     external fun isNpuAvailable(): Boolean
 
+    /**
+     * Margin threshold for the CPU arbitration. 0 disables it.
+     *
+     * When the NPU's own top-1 and top-2 are closer than this, the conversion is
+     * recomputed on the CPU. Higher is safer and slower.
+     */
+    external fun setMarginTau(tau: Float)
+
     /** 診断用: ggmlバックエンドのデバイス一覧。 */
     external fun getBackendDeviceSummary(): String
 

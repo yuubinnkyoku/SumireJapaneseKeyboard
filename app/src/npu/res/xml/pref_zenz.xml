@@ -70,6 +70,23 @@
             app:summary="@string/zenz_model_preference_summary"
             app:useSimpleSummaryProvider="true" />
 
+        <SwitchPreferenceCompat
+            android:key="zenz_margin_arbitration_preference"
+            android:title="@string/zenz_margin_arbitration_title"
+            app:defaultValue="true"
+            app:summary="@string/zenz_margin_arbitration_summary" />
+
+        <SeekBarPreference
+            android:key="zenz_margin_tau_preference"
+            android:dependency="zenz_margin_arbitration_preference"
+            android:title="@string/zenz_margin_tau_title"
+            app:defaultValue="15"
+            app:min="0"
+            android:max="50"
+            app:seekBarIncrement="5"
+            app:showSeekBarValue="true"
+            app:summary="@string/zenz_margin_tau_summary" />
+
         <SeekBarPreference
             android:defaultValue="300"
             android:key="zenz_debounce_time_preference"

@@ -51,6 +51,7 @@ class ZenzRuntimeService : Service() {
                     initializedModelPath = null
                     val npuEnabled = readNpuEnabledSetting()
                     ZenzEngine.setNpuEnabled(npuEnabled)
+                    ZenzEngine.setMarginTau(readMarginTauSetting())
                     if (npuEnabled) {
                         Timber.i(
                             "zenz npu requested, device available=%b",
@@ -268,6 +269,16 @@ class ZenzRuntimeService : Service() {
      * takes effect on the next engine start. Builds without the NPU backend ignore it.
      */
     private fun readNpuEnabledSetting(): Boolean = AppPreference.zenz_npu_execution_preference
+
+    /**
+     * Arbitration threshold, or 0 when the switch is off.
+     *
+     * The preference stores tenths of a logit so the slider can use integers.
+     */
+    private fun readMarginTauSetting(): Float {
+        if (!AppPreference.zenz_margin_arbitration_preference) return 0.0f
+        return AppPreference.zenz_margin_tau_preference / 10.0f
+    }
 
     private fun CoroutineDispatcher.closeIfPossible() {
         (this as? AutoCloseable)?.close()
