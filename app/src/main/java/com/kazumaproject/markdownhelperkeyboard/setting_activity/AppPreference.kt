@@ -787,7 +787,7 @@ object AppPreference {
         Pair("zenz_npu_execution_preference", true)
 
     private val ZENZ_MODEL_PREFERENCE =
-        Pair("zenz_model_preference", "xsmall")
+        Pair("zenz_model_preference", "small")
 
     private val ZENZ_MARGIN_ARBITRATION_PREFERENCE =
         Pair("zenz_margin_arbitration_preference", true)

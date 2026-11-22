@@ -66,7 +66,7 @@
             android:title="@string/zenz_model_preference_title"
             android:entries="@array/zenz_model_entries"
             android:entryValues="@array/zenz_model_values"
-            app:defaultValue="xsmall"
+            app:defaultValue="small"
             app:summary="@string/zenz_model_preference_summary"
             app:useSimpleSummaryProvider="true" />
 

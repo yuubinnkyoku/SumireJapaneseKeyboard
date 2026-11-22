@@ -30,7 +30,7 @@ class ZenzImeLongPressInstrumentedTest {
     private val uiAutomation: UiAutomation
         get() = instrumentation.uiAutomation
 
-    @Test(timeout = 120_000)
+    @Test(timeout = 300_000)
     fun conversionKeyLongPressStartsZenzWhenAutomaticConversionIsDisabled() {
         assumeTrue("Zenz is only available in the full edition", AppVariantConfig.hasZenz)
         val context = instrumentation.targetContext
@@ -71,11 +71,11 @@ class ZenzImeLongPressInstrumentedTest {
             var composedText = ""
             for (attempt in 1..3) {
                 injectTouch(
-                    point = PointF(width * 0.299f, height * 0.712f),
+                    point = PointF(width * 0.242f, height * 0.712f),
                     holdMillis = 50L,
                 )
                 injectTouch(
-                    point = PointF(width * 0.500f, height * 0.712f),
+                    point = PointF(width * 0.444f, height * 0.712f),
                     holdMillis = 50L,
                 )
                 SystemClock.sleep(700L)
