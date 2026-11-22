@@ -208,6 +208,24 @@ static bool is_zenz_protocol_marker(uint32_t codepoint) {
            codepoint <= kZenzProtocolMarkerLast;
 }
 
+// Editors sometimes insert invisible characters (a zero-width space after a
+// line break, for example). They carry no meaning, but they change the prompt
+// and therefore the answer, so the same reading converts differently per app.
+static bool is_invisible_prompt_char(uint32_t codepoint) {
+    switch (codepoint) {
+        case 0x200B:  // zero width space
+        case 0x200C:  // zero width non-joiner
+        case 0x200D:  // zero width joiner
+        case 0x200E:  // left-to-right mark
+        case 0x200F:  // right-to-left mark
+        case 0x2060:  // word joiner
+        case 0xFEFF:  // zero width no-break space
+            return true;
+        default:
+            return false;
+    }
+}
+
 // ------- JNI文字列変換（重要） -------
 // llama_token_to_piece() が返すバイト列は不正UTF-8になり得るため、NewStringUTFは禁止。
 // UTF-8(不正あり得る) -> UTF-16(不正は U+FFFD 置換) -> NewString で返す。
@@ -577,6 +595,7 @@ static std::string sanitize_prompt_field(std::string_view text) {
         }
 
         if (!is_zenz_protocol_marker(codepoint) &&
+            !is_invisible_prompt_char(codepoint) &&
             codepoint >= 0x20 && codepoint != 0x7F) {
             sanitized.append(text, offset, width);
         }
