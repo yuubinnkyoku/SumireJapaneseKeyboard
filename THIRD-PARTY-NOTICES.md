@@ -104,7 +104,9 @@ offline. POM declarations do not replace the individual third-party notices.
 
 Zenz model metadata is pinned to
 `Miwa-Keita/zenz-v3.2-xsmall-gguf@4f5423f0fad41a73b1242eb96fe5c12ae4fdca83`
-(Apache 2.0 declaration); native llama.cpp is pinned to
+(Apache 2.0 declaration); the optional higher-accuracy model is pinned to
+`Miwa-Keita/zenz-v3.2-small-gguf@ef3e66e3665fe6a19598e6578e9b88a994b647fd`
+(CC BY-SA 4.0 declaration); native llama.cpp is pinned to
 `88b97a47dc7f5892e2d5a6856fbe9cfe237f9e5c` (MIT).
 The OpenMP runtime notice is retained from Android NDK `29.0.14206865`
 `NOTICE.toolchain`, including Apache 2.0 with LLVM Exceptions and its legacy
