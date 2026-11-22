@@ -399,6 +399,8 @@ static std::string build_zenz_prompt(
     prompt += inputTag;
     prompt += safeInput;
     prompt += outputTag;
+    LOGI("prompt: profile=[%s] left=[%s] right=[%s] input=[%s]",
+         safeProfile.c_str(), safeLeftContext.c_str(), safeRightContext.c_str(), safeInput.c_str());
     return prompt;
 }
 
