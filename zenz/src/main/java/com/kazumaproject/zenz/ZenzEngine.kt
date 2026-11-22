@@ -35,6 +35,21 @@ object ZenzEngine {
      */
     external fun setMarginTau(tau: Float)
 
+    /**
+     * Diagnostic: push matching ops back to the CPU before the backend starts.
+     *
+     * Takes a case-insensitive regex over the ggml op name, for example "MUL_MAT".
+     * Empty clears it. Must be called before initModel.
+     */
+    external fun setHexagonOpFilter(pattern: String)
+
+    /**
+     * Diagnostic: write selected graph nodes to this file.
+     *
+     * Empty clears it. Must be called before initModel.
+     */
+    external fun setTensorDumpPath(path: String)
+
     /** 診断用: ggmlバックエンドのデバイス一覧。 */
     external fun getBackendDeviceSummary(): String
 

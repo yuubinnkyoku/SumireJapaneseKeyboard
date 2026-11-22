@@ -668,6 +668,62 @@ static void destroy_session_context_locked() {
     g_session.config = RuntimeConfig{0, 0, 0, 0};
 }
 
+// ------- Round 25: per-node tensor dump -------
+//
+// The NPU logits come out about 6% smaller than the CPU ones. This hook writes
+// selected graph nodes to a file so the two runs can be compared layer by layer.
+// Enabled only when ZENZ_TENSOR_DUMP names a file.
+static std::mutex g_dump_mutex;
+static int g_dump_step = -1;
+
+static const char * zenz_tensor_dump_path() {
+    static const char * p = []() -> const char * {
+        const char * e = getenv("ZENZ_TENSOR_DUMP");
+        return e && *e ? e : nullptr;
+    }();
+    return p;
+}
+
+// Only the nodes that matter for the scale question: the final norm and the
+// logits, plus the first block output as a sanity anchor.
+static bool zenz_dump_wanted(const ggml_tensor * t) {
+    if (!t || !t->name[0]) {
+        return false;
+    }
+    const std::string name(t->name);
+    return name == "result_norm" || name == "result_output" ||
+           name == "l_out-0" || name == "inp_embd";
+}
+
+static bool zenz_dump_callback(ggml_tensor * t, bool ask, void * /*user_data*/) {
+    if (ask) {
+        return zenz_dump_wanted(t);
+    }
+    const char * path = zenz_tensor_dump_path();
+    if (!path || !zenz_dump_wanted(t)) {
+        return true;
+    }
+    if (t->type != GGML_TYPE_F32) {
+        return true;
+    }
+    const size_t n = (size_t) ggml_nelements(t);
+    std::vector<float> buf(n);
+    ggml_backend_tensor_get(t, buf.data(), 0, n * sizeof(float));
+
+    std::lock_guard<std::mutex> lock(g_dump_mutex);
+    FILE * file = fopen(path, "a");
+    if (!file) {
+        return true;
+    }
+    fprintf(file, "TENSOR name=%s step=%d ne=%zu", t->name, g_dump_step, n);
+    for (size_t i = 0; i < n; i++) {
+        fprintf(file, " %.6f", buf[i]);
+    }
+    fprintf(file, "\n");
+    fclose(file);
+    return true;
+}
+
 static llama_context *ensure_session_context_locked() {
     if (!g_model) {
         return nullptr;
@@ -685,6 +741,10 @@ static llama_context *ensure_session_context_locked() {
     cparams.n_threads = config.n_threads;
     cparams.n_threads_batch = config.n_threads_batch;
     cparams.n_batch = config.n_batch;
+    if (zenz_tensor_dump_path()) {
+        cparams.cb_eval = zenz_dump_callback;
+        cparams.cb_eval_user_data = nullptr;
+    }
 
     g_session.ctx = llama_init_from_model(g_model, cparams);
     if (!g_session.ctx) {
@@ -1091,6 +1151,7 @@ static GreedyDecodeOutcome greedy_decode_with_margin(
             return outcome;
         }
 
+        g_dump_step = i;
         float *logits = llama_get_logits_ith(ctx, -1);
         if (!logits) {
             LOGE("logits is null");
@@ -1766,6 +1827,48 @@ Java_com_kazumaproject_zenz_ZenzEngine_setLogitDumpPath(
     (void) env;
     (void) jPath;
 #endif
+}
+
+// Diagnostic hook: names the file that receives per-node tensors.
+// Must be set before initModel, because the callback is wired at context creation.
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_kazumaproject_zenz_ZenzEngine_setTensorDumpPath(
+        JNIEnv *env,
+        jobject /*thiz*/,
+        jstring jPath
+) {
+    const char *c_path = env->GetStringUTFChars(jPath, nullptr);
+    if (c_path) {
+        if (c_path[0]) {
+            setenv("ZENZ_TENSOR_DUMP", c_path, 1);
+        } else {
+            unsetenv("ZENZ_TENSOR_DUMP");
+        }
+        LOGI("setTensorDumpPath: %s", c_path);
+        env->ReleaseStringUTFChars(jPath, c_path);
+    }
+}
+
+// Diagnostic hook: sets GGML_HEXAGON_OPFILTER before the backend initialises,
+// so a single op family can be pushed back to the CPU for A/B comparison.
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_kazumaproject_zenz_ZenzEngine_setHexagonOpFilter(
+        JNIEnv *env,
+        jobject /*thiz*/,
+        jstring jPattern
+) {
+    const char *c_pattern = env->GetStringUTFChars(jPattern, nullptr);
+    if (c_pattern) {
+        if (c_pattern[0]) {
+            setenv("GGML_HEXAGON_OPFILTER", c_pattern, 1);
+        } else {
+            unsetenv("GGML_HEXAGON_OPFILTER");
+        }
+        LOGI("setHexagonOpFilter: %s", c_pattern);
+        env->ReleaseStringUTFChars(jPattern, c_pattern);
+    }
 }
 
 extern "C"
