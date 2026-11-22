@@ -2,7 +2,7 @@
 <resources>
     <!-- npu flavor only: model choice for the zenz engine. -->
     <string name="zenz_model_preference_title">AI変換に使うモデル</string>
-    <string name="zenz_model_preference_summary">小さいモデルは高速、大きいモデルは高精度です。変更は次回の変換エンジン起動時に反映されます。</string>
+    <string name="zenz_model_preference_summary">小さいモデルは高速、大きいモデルは高精度です。変更は次回の変換エンジン起動時（キーボードの切り替え、またはアプリの再起動）に反映されます。同梱されていないモデルを選んだ場合は自動的に既定のモデルを使います。</string>
 
     <string-array name="zenz_model_entries">
         <item>xsmall（高速・21MB）</item>

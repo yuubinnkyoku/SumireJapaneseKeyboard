@@ -31989,12 +31989,15 @@ class IMEService : InputMethodService(), LifecycleOwner, InputConnection,
     private fun resolveZenzModelPath(customUri: String): String? {
         // The npu flavor ships a second, larger model and lets the user pick it.
         // Other flavors only have the default asset, so the name stays fixed.
-        val defaultAssetFileName = if (BuildConfig.APP_EDITION == "full" && hasSecondZenzModel()) {
-            if (AppPreference.zenz_model_preference == "small") {
-                "ggml-model-small-Q5_K_M.gguf"
-            } else {
-                "ggml-model-Q5_K_M.gguf"
-            }
+        // A missing second asset falls back to the default instead of failing, so a
+        // daily build that ships only the small model still starts.
+        val wantsSmall = AppPreference.zenz_model_preference == "small"
+        val hasSmall = BuildConfig.APP_EDITION == "full" && hasSecondZenzModel()
+        if (wantsSmall && !hasSmall) {
+            Timber.w("zenz model preference is small but the asset is missing, using the default model")
+        }
+        val defaultAssetFileName = if (hasSmall && wantsSmall) {
+            "ggml-model-small-Q5_K_M.gguf"
         } else {
             "ggml-model-Q5_K_M.gguf"
         }

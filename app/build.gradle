@@ -67,8 +67,13 @@ android {
         }
         npu {
             dimension "edition"
-            applicationIdSuffix ".npu"
-            versionNameSuffix "-npu"
+            // -PplainAppId=true builds the npu flavor under the production id so it can
+            // replace the store app. The default keeps the .npu suffix for side-by-side
+            // testing.
+            if (!project.hasProperty("plainAppId")) {
+                applicationIdSuffix ".npu"
+            }
+            versionNameSuffix project.hasProperty("plainAppId") ? "-npu-daily" : "-npu"
             buildConfigField "boolean", "HAS_ZENZ", "true"
             buildConfigField "boolean", "HAS_GEMMA", "false"
             buildConfigField "String", "APP_EDITION", "\"full\""

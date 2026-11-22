@@ -1107,7 +1107,7 @@
     <string name="enable_zenz_right_context_preference_title">右側の文脈を利用する</string>
     <string name="enable_zenz_right_context_preference_summary">カーソル右側の文脈を Zenz v3.2 の right context tag（U+EE07）として渡します</string>
     <string name="zenz_npu_execution_preference_title">AI変換をNPUで実行する</string>
-    <string name="zenz_npu_execution_preference_summary">AI変換の計算に端末のNPU（Hexagon）を使います。NPUに対応していない端末やビルドでは自動的にCPUで実行します。設定は次回の変換エンジン起動時に反映されます。</string>
+    <string name="zenz_npu_execution_preference_summary">AI変換の計算に端末のNPU（Hexagon）を使います。NPUに対応していない端末やビルドでは自動的にCPUで実行します。設定は次回の変換エンジン起動時（キーボードの切り替え、またはアプリの再起動）に反映されます。</string>
     <string name="typo_correction_title">タイピングミス補正</string>
     <string name="enable_typo_correction_japanese_flick_keyboard_preference_title">日本語フリックの入力ミスを補正</string>
     <string name="enable_typo_correction_japanese_flick_keyboard_preference_sumary">フリック入力でミスを検知した場合、補正した変換候補を表示します。</string>
