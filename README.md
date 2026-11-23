@@ -36,6 +36,8 @@
 
 Qualcomm Hexagon NPU で zenz モデルを動かします。対応端末では CPU より約 10〜25 倍高速です。対応していない端末やビルドでは自動的に CPU で実行します。
 
+**NPU での AI 変換は Snapdragon 8 Elite Gen 5（Hexagon HTP v81）端末のみです。その他の端末では CPU で動作します（自動切替、設定不要）。**
+
 **2つのモデルから選択**
 
 | モデル | サイズ | 特徴 |
