@@ -269,3 +269,138 @@ xsmall empty: 0  small empty: 0
 1. 上流新機能の生存確認を完了する（キー詳細編集の開き方を特定）
 2. 速度測定の条件を統制する（ウォームアップ、熱、同一セッション）
 3. モデル fallback をテストで確認する
+
+## 9. 追記: release ビルドの作成と公開（2026-11-23）
+
+第28ラウンドの後、release ビルドを作成して GitHub Releases に公開した。
+
+### 9.1 release ビルドが通らなかった原因
+
+第24ラウンドから `:app:generateNpuStandardReleaseDictionaryLicenses` が失敗していた。原因は **`core.autocrlf=true`**。
+
+- ライセンスファイルが CRLF でチェックアウトされる
+- `prepare.py` が SHA256 で検証するため一致しない
+- `.gitattributes` で `-text` 指定されたファイル（`distribution-licenses.txt`、`software-licenses/*.txt`）は CRLF が保持されるが、それ以外は変換される
+
+**解決:**
+
+```powershell
+git config core.autocrlf false
+git rm --cached -r . -q
+git reset --hard HEAD
+```
+
+これで全ファイルが LF でチェックアウトされ、検証が通った。
+
+**副次的に判明したこと:** `id.def` と `mozc.txt` は上流と内容が違っていた（サイズも違う）。上流の版に置き換えた。
+
+### 9.2 署名キーの作成
+
+```powershell
+keytool -genkeypair -v -keystore release-keystore.jks -alias sumire-npu `
+  -keyalg RSA -keysize 4096 -validity 10000 `
+  -dname "CN=Sumire NPU, OU=Personal, O=Personal, L=Tokyo, ST=Tokyo, C=JP"
+```
+
+`local.properties` に設定（パスは絶対パスで指定。相対パスだと `app/` 基準で解決されて失敗する）:
+
+```properties
+KEYSTORE_FILE=D:/ghq/.../release-keystore.jks
+KEYSTORE_PASSWORD=...
+KEY_ALIAS=sumire-npu
+KEY_PASSWORD=...
+```
+
+`.gitignore` に追加（`release-keystore.jks`、`*.jks`、`*.keystore`）。**リポジトリには一切コミットされていない。**
+
+### 9.3 release APK の検査
+
+| 項目 | 値 |
+|---|---|
+| ファイル | `app-npu-standard-release.apk` |
+| サイズ | **146 MB**（debug は 221.2 MB） |
+| package | `com.kazumaproject.markdownhelperkeyboard.npu` |
+| versionName | `1.7.163-npu` |
+| versionCode | 880 |
+| 署名 | `CN=Sumire NPU`（SHA-256 `ee06e45c...`） |
+| `pkgFlags` | **DEBUGGABLE なし** |
+| `libggml-htp-v81.so` | 1.02 MB |
+| `libomp.so` | 0.93 MB |
+| `libzenz.so` | 6.11 MB（debug は 11.56 MB） |
+| `libcdsprpc.so` | **非同梱** |
+| GGUF | xsmall 20MB + small 70.4MB |
+
+### 9.4 公開
+
+**URL:** https://github.com/yuubinnkyoku/SumireJapaneseKeyboard/releases/tag/v1.7.163-npu
+
+- ブランチ `zenz/npu-upstream-20261121` を push
+- タグ `v1.7.163-npu` を作成・push
+- `gh release create` で APK を添付
+- デフォルトブランチ `zenz/npu` も fast-forward（67コミット）
+
+### 9.5 README の書き換え
+
+上流の README は Play ストア版の説明なので、フォーク用のヘッダーに差し替えた。
+
+- 上流との違い（比較表）
+- 主な機能（NPU 実行、2モデル選択、CPU 再計算）
+- インストール手順（署名が違う旨の注意）
+- 既知の制限
+- NPU と CPU の差について（実測値と原因）
+- ビルド方法
+- ライセンス
+- 上流への追従方法
+
+上流の README はそのまま下に残した。
+
+### 9.6 ライセンス対応
+
+**small モデルが CC BY-SA 4.0 と判明**（xsmall は Apache 2.0）。上流は xsmall しか同梱していないので、small の表記がなかった。
+
+3箇所に追加:
+
+| ファイル | 内容 |
+|---|---|
+| `app/src/main/assets/software-licenses/zenz-model-small-card.txt` | モデルカード（新規） |
+| `OpenSourceLicenses.kt` | アプリ内ライセンス画面の項目 |
+| `values/licenses.xml` / `values-ja/licenses.xml` | 文字列 |
+| `THIRD-PARTY-NOTICES.md` | 固定リビジョンとライセンス宣言 |
+| `docs/licenses/README.md` | 証跡の表 |
+| `docs/licenses/notices/zenz-model-small-card.md` | メタデータ（新規） |
+
+実機で表示確認済み（`Zenz v3.2 small`、利用条件 `CC BY-SA 4.0`、原文全文）。
+
+### 9.7 対応 HTP バージョン
+
+**v81 のみ同梱。** llama.cpp は v73/v75/v79/v81 をビルド対象にしているが、我々は prebuilt の v81 だけを使っている。
+
+実行時は端末の HTP バージョンを検出して `libggml-htp-v{arch}.so` を探す。ファイルがなければ CPU にフォールバックする（アプリは落ちない）。
+
+| HTP | SoC | 動作 |
+|---|---|---|
+| v73 | Snapdragon 8 Gen 2 | CPU |
+| v75 | Snapdragon 8 Gen 3 | CPU |
+| v79 | Snapdragon 8 Elite | CPU |
+| **v81** | **Snapdragon 8 Elite Gen 5** | **NPU** |
+
+**方針: 現状維持。** 検証できる機材が NX741J（v81）だけなので、未検証の経路を公開物に含めない。必要が生じたら skel を追加する（実行時パスを変えずファイル追加だけなのでリスクは小さい）。
+
+リリースノートと README に対応範囲を明記した。
+
+### 9.8 実機での動作確認
+
+**所有者が release ビルドで動作確認済み**（2026-11-23）。
+
+- 端末: NX741J
+- インストール: `1.7.163-npu`、`pkgFlags` に DEBUGGABLE なし
+- 既定 IME: `.npu` 版
+- 確認内容: 設定アプリの「入力を試す」欄での変換
+
+**注意:** release ビルドは `debuggable` でないため、`run-as`・instrumentation・`FastInputHostActivity` が使えない。私からは自動確認できないため、所有者の手動確認に依存した。
+
+### 9.9 学習辞書の消失
+
+署名が変わったため、debug 版をアンインストールしてから release 版を入れた。**学習辞書（18.4 MB）は失われた。**
+
+バックアップは `_artifacts/backup-npu-data/` にあるが、release 版では `run-as` が使えないため復元できない。
