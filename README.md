@@ -1,24 +1,117 @@
-# Sumire (スミレ) — The Privacy-First Japanese Keyboard
+# Sumire NPU 版 (スミレ)
 
 <p align="center">
   <img src="images/demo.gif" width="250" alt="Sumire typing demo"/>
 </p>
-<h3 align="center">Your Keys, Your Data, Your Style.</h3>
-<p align="center">あなたの手に、プライバシーと自由を。</p>
+<h3 align="center">NPU で動く日本語キーボード</h3>
+<p align="center">個人使用向けのフォークビルド</p>
 
 <p align="center">
-  <a href="https://play.google.com/store/apps/details?id=com.kazumaproject.markdownhelperkeyboard"><img alt="Google Play で手に入れよう" src="https://cdn.rawgit.com/steverichey/google-play-badge-svg/master/img/ja_get.svg" height="60"></a>
-  <a href="https://f-droid.org/packages/com.kazumaproject.markdownhelperkeyboard.lite.fdroid/"><img src="https://img.shields.io/f-droid/v/com.kazumaproject.markdownhelperkeyboard.lite.fdroid?style=for-the-badge&logo=fdroid" alt="F-Droid release"></a>
-  <a href="https://github.com/KazumaProject/JapaneseKeyboard/releases"><img src="https://img.shields.io/github/v/release/KazumaProject/JapaneseKeyboard?style=for-the-badge" alt="GitHub release"></a>
-</p>
-
-
-<p align="center">
-  <a href="https://github.com/KazumaProject/JapaneseKeyboard/actions/workflows/android.yml"><img src="https://github.com/KazumaProject/JapaneseKeyboard/actions/workflows/android.yml/badge.svg" alt="Android CI"></a>
+  <a href="https://github.com/yuubinnkyoku/SumireJapaneseKeyboard/releases"><img src="https://img.shields.io/github/v/release/yuubinnkyoku/SumireJapaneseKeyboard?style=for-the-badge" alt="GitHub release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/minSdk-24-blue" alt="minSdk 24">
-  <img src="https://img.shields.io/badge/targetSdk-36-blue" alt="targetSdk 36">
 </p>
+
+---
+
+## このリポジトリについて
+
+[KazumaProject/JapaneseKeyboard](https://github.com/KazumaProject/JapaneseKeyboard) のフォークです。**Qualcomm Hexagon NPU で AI 変換を動かす**ための変更を加えています。
+
+個人使用向けのビルドで、Google Play 版とは別アプリとして動作します。
+
+### 上流との違い
+
+| 項目 | 上流 | このフォーク |
+|---|---|---|
+| AI 変換の実行先 | CPU のみ | **NPU (Hexagon) または CPU** |
+| モデル | xsmall のみ | **xsmall / small から選択** |
+| 迷った変換の再計算 | なし | **CPU で計算し直す（任意）** |
+| パッケージ名 | `...markdownhelperkeyboard` | `...markdownhelperkeyboard.npu` |
+| フレーバー | full / lite | **npu** を追加 |
+
+### 主な機能
+
+**NPU で AI 変換**
+
+Qualcomm Hexagon NPU で zenz モデルを動かします。対応端末では CPU より約 10〜25 倍高速です。対応していない端末やビルドでは自動的に CPU で実行します。
+
+**2つのモデルから選択**
+
+| モデル | サイズ | 特徴 |
+|---|---|---|
+| **small**（既定） | 70.4 MB | 高精度。126例の比較で14勝1敗 |
+| xsmall | 20 MB | 軽量。APK サイズを抑えたい場合 |
+
+**迷った変換を CPU で計算し直す（任意）**
+
+NPU の判断が僅差のとき、CPU で計算し直して CPU の結果を返します。精度は上がりますが、その変換だけ遅くなります。既定は OFF（速度優先）。
+
+### インストール
+
+[Releases](https://github.com/yuubinnkyoku/SumireJapaneseKeyboard/releases) から APK をダウンロードしてください。
+
+1. APK を端末に転送
+2. 「提供元不明のアプリ」を許可
+3. APK をタップしてインストール
+4. 設定 → システム → 言語と入力 → キーボード → **Sumire (npu)** を有効化
+5. キーボードを切り替え
+
+**Google Play 版とは署名が違うため、上書きインストールできません。** 別アプリとして共存します。
+
+### 既知の制限
+
+- **31文字以上の読み**では AI 変換候補が出ません（モデルの仕様）
+- **学習辞書・ユーザー辞書**は Play 版と共有されません（別アプリのため）
+- NPU と CPU で logits に差があり、稀に変換結果が変わります
+
+### NPU と CPU の差について
+
+同じモデルでも NPU と CPU で計算結果が微妙に異なります。実測値:
+
+- logits の偏差: 平均 0.284、最大 0.885（生成位置 0）
+- 原因: 行列積（MUL_MAT）の積和順序とタイル分割の違いが層ごとに蓄積
+
+**単一のバグではなく、浮動小数点演算の実装差**です。f16 タイル化、GELU 近似、softmax 近似はいずれも主因ではありません（フィルタ実験で確認）。
+
+「迷った変換を CPU で計算し直す」を ON にすると、この差による誤変換を防げます。
+
+### ビルド
+
+```bash
+# NPU 版のビルド
+./gradlew :app:assembleNpuStandardRelease -x :zenz:prepareZenzModel
+```
+
+`local.properties` に Hexagon SDK のパスが必要です。
+
+```properties
+zenzNpuEnabled=true
+zenzHexagonSdkRoot=C:/Qualcomm/Hexagon_SDK/6.6.0.0
+zenzHexagonPrebuiltDir=D:/path/to/zenz-npu-prebuilt
+```
+
+### ライセンス
+
+- アプリ本体: MIT License（上流と同じ）
+- zenz モデル（xsmall）: Apache License 2.0
+- zenz モデル（small）: **CC BY-SA 4.0**
+- llama.cpp: MIT License
+
+アプリ内の「ライセンスと出典」画面に全文を掲載しています。
+
+### 上流への追従
+
+上流 dev の変更は定期的に取り込んでいます。`zenz/` 領域に上流の変更が入った場合は、手動での調停が必要です。
+
+```bash
+git fetch upstream dev
+git log --oneline <前回基点>..upstream/dev -- zenz/
+```
+
+---
+
+以下は上流の README です。
 
 ---
 
