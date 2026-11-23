@@ -35,3 +35,8 @@ zenz/src/androidTest/assets/*.gguf
 
 # Local verification artifacts (logs, screenshots, probe modules).
 /_artifacts/
+
+# Release signing key (personal use, never commit)
+release-keystore.jks
+*.jks
+*.keystore
